@@ -1,0 +1,27 @@
+{
+  "name": "@rollout-platform/edge-evaluator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+  "dev": "tsx watch src/server.ts",
+  "build": "tsc -p tsconfig.json",
+  "typecheck": "tsc -p tsconfig.json --noEmit",
+  "start": "node dist/server.js"
+},
+  "keywords": [],
+  "author": "",
+  "private": true,
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@rollout-platform/contracts": "^1.0.0"
+  }
+}

@@ -4,11 +4,13 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-  "dev": "tsx watch src/server.ts",
-  "build": "tsc -p tsconfig.json",
-  "typecheck": "tsc -p tsconfig.json --noEmit",
-  "start": "node dist/server.js"
-},
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "test:integration": "vitest run tests/integration"
+  },
   "keywords": [],
   "author": "",
   "private": true,
@@ -19,7 +21,8 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.2",
     "tsx": "^4.23.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@rollout-platform/contracts": "^1.0.0"

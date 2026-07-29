@@ -3,3 +3,5 @@ export const featureFlag = {
   candidateModelVersionId: "model-v2",
   candidatePercentage: 20,
 };
+
+export type FeatureFlag = typeof featureFlag;

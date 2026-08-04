@@ -25,6 +25,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
-    "@rollout-platform/contracts": "^1.0.0"
+    "@rollout-platform/contracts": "^1.0.0",
+    "redis": "^6.2.0"
   }
 }

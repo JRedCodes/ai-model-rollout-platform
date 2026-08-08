@@ -12,6 +12,7 @@ import {
   getActiveFeatureFlag,
 } from "../repositories/feature-flag.repository.js";
 import { selectModel } from "../services/traffic-assignment.service.js";
+import { publishInferenceEvent } from "../services/telemetry.service.js";
 
 export const inferenceRouter = Router();
 
@@ -43,6 +44,14 @@ inferenceRouter.post("/infer", async (request, response) => {
         requestId: parsedRequest.data.requestId,
         input: parsedRequest.data.input,
       },
+    );
+
+    publishInferenceEvent(
+      parsedRequest.data.requestId,
+      parsedRequest.data.userId,
+      featureFlag,
+      selectedModelVersionId,
+      modelResponse,
     );
 
     const edgeResponse: EdgeInferenceResponse =

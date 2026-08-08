@@ -8,5 +8,8 @@ export const env = {
     process.env.REDIS_URL ?? "redis://localhost:6379",
   FEATURE_FLAG_KEY:
     process.env.FEATURE_FLAG_KEY ??
-    "feature-flag:model-routing:development"
+    "feature-flag:model-routing:development",
+  TELEMETRY_STREAM_KEY:
+    process.env.TELEMETRY_STREAM_KEY ??
+    "telemetry:inference-completed",
 };

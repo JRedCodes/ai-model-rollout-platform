@@ -1,4 +1,4 @@
-import type { FeatureFlag } from "../config/feature-flag.js";
+import type { FeatureFlag } from "@rollout-platform/contracts";
 
 function hashString(value: string): number {
   let hash = 0;
@@ -14,6 +14,13 @@ export function selectModel(
   userId: string,
   flag: FeatureFlag,
 ): string {
+  if (
+    flag.candidateModelVersionId === null ||
+    flag.candidatePercentage === 0
+  ) {
+    return flag.stableModelVersionId;
+  }
+
   const bucket = hashString(userId) % 100;
 
   return bucket < flag.candidatePercentage

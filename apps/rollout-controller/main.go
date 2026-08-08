@@ -42,6 +42,7 @@ func main() {
 		rolloutCfg.RolloutPhaseID,
 		rolloutCfg.StableModelVersionID,
 		rolloutCfg.CandidateModelVersionID,
+		rolloutCfg.CandidatePercentage,
 	)
 
 	consumer := ingestion.New(

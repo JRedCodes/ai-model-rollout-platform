@@ -20,6 +20,8 @@ const testFeatureFlagKey =
 
 const testFeatureFlag = {
   flagKey: "model-routing",
+  rolloutId: "rollout-101",
+  rolloutPhaseId: "phase-1",
   stableModelVersionId: "model-v1",
   candidateModelVersionId: "model-v2",
   candidatePercentage: 20,

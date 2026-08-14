@@ -11,7 +11,7 @@ import { redisClient } from "../redis/redis.client.js";
 export function publishInferenceEvent(
   requestId: string,
   userId: string,
-  featureFlag: FeatureFlag,
+  featureFlag: FeatureFlag | null,
   selectedModelVersionId: string,
   modelResponse: ModelInferenceResponse,
 ): void {
@@ -20,10 +20,11 @@ export function publishInferenceEvent(
     eventId: randomUUID(),
     requestId,
     userId,
-    rolloutId: featureFlag.rolloutId,
-    rolloutPhaseId: featureFlag.rolloutPhaseId,
+    rolloutId: featureFlag?.rolloutId ?? null,
+    rolloutPhaseId: featureFlag?.rolloutPhaseId ?? null,
     modelVersionId: modelResponse.modelVersionId,
     assignment:
+      featureFlag === null ||
       selectedModelVersionId === featureFlag.stableModelVersionId
         ? "stable"
         : "candidate",

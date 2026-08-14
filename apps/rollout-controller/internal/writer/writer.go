@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -89,11 +90,20 @@ func (w *Writer) SeedRedis(ctx context.Context) error {
 }
 
 func (w *Writer) Run(ctx context.Context) {
+	heartbeat := time.NewTicker(60 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case cmd := <-w.Commands:
 			if err := w.handle(ctx, cmd); err != nil {
 				log.Printf("writer: failed to handle %s command: %v", cmd.Type, err)
+			}
+		case <-heartbeat.C:
+			if !w.held.Load() {
+				if err := w.writeActiveFlag(ctx); err != nil {
+					log.Printf("writer: heartbeat re-seed failed: %v", err)
+				}
 			}
 		case <-ctx.Done():
 			return

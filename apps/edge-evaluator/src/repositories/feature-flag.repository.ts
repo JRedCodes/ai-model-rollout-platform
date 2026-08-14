@@ -20,10 +20,24 @@ export class InvalidFeatureFlagError extends Error {
   }
 }
 
+export class RedisUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("Redis is unavailable");
+    this.name = "RedisUnavailableError";
+    this.cause = cause;
+  }
+}
+
 export async function getFeatureFlag(
   featureFlagKey: string,
 ): Promise<FeatureFlag> {
-  const serializedFlag = await redisClient.get(featureFlagKey);
+  let serializedFlag: string | null;
+
+  try {
+    serializedFlag = await redisClient.get(featureFlagKey);
+  } catch (cause) {
+    throw new RedisUnavailableError(cause);
+  }
 
   if (serializedFlag === null) {
     throw new FeatureFlagNotFoundError(featureFlagKey);

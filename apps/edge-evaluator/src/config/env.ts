@@ -12,4 +12,6 @@ export const env = {
   TELEMETRY_STREAM_KEY:
     process.env.TELEMETRY_STREAM_KEY ??
     "telemetry:inference-completed",
+  STABLE_MODEL_FALLBACK_ID:
+    process.env.STABLE_MODEL_FALLBACK_ID ?? "model-v1",
 };

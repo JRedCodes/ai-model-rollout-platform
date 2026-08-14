@@ -6,27 +6,26 @@ import {
 } from "@rollout-platform/contracts";
 
 import { requestModelInference } from "../clients/model-service.client.js";
+import { env } from "../config/env.js";
 import {
   FeatureFlagNotFoundError,
   InvalidFeatureFlagError,
+  RedisUnavailableError,
   getActiveFeatureFlag,
 } from "../repositories/feature-flag.repository.js";
-import { selectModel } from "../services/traffic-assignment.service.js";
 import { publishInferenceEvent } from "../services/telemetry.service.js";
+import { selectModel } from "../services/traffic-assignment.service.js";
 
 export const inferenceRouter = Router();
 
 inferenceRouter.post("/infer", async (request, response) => {
-  const parsedRequest = edgeInferenceRequestSchema.safeParse(
-    request.body,
-  );
+  const parsedRequest = edgeInferenceRequestSchema.safeParse(request.body);
 
   if (!parsedRequest.success) {
     response.status(400).json({
       error: "Invalid request body",
       details: parsedRequest.error.issues,
     });
-
     return;
   }
 
@@ -54,54 +53,88 @@ inferenceRouter.post("/infer", async (request, response) => {
       modelResponse,
     );
 
-    const edgeResponse: EdgeInferenceResponse =
-      modelResponse.success
-        ? {
-            requestId: modelResponse.requestId,
-            success: true,
-            result: {
-              classification:
-                modelResponse.output.classification,
-            },
-          }
-        : {
-            requestId: modelResponse.requestId,
-            success: false,
-            errorType: modelResponse.errorType,
-          };
+    const edgeResponse: EdgeInferenceResponse = modelResponse.success
+      ? {
+          requestId: modelResponse.requestId,
+          success: true,
+          result: { classification: modelResponse.output.classification },
+        }
+      : {
+          requestId: modelResponse.requestId,
+          success: false,
+          errorType: modelResponse.errorType,
+        };
 
     response.status(200).json(edgeResponse);
   } catch (error: unknown) {
+    if (error instanceof RedisUnavailableError) {
+      console.warn("Redis unavailable — routing to stable model fallback");
+
+      try {
+        const modelResponse = await requestModelInference(
+          env.STABLE_MODEL_FALLBACK_ID,
+          {
+            requestId: parsedRequest.data.requestId,
+            input: parsedRequest.data.input,
+          },
+        );
+
+        publishInferenceEvent(
+          parsedRequest.data.requestId,
+          parsedRequest.data.userId,
+          null,
+          env.STABLE_MODEL_FALLBACK_ID,
+          modelResponse,
+        );
+
+        const edgeResponse: EdgeInferenceResponse = modelResponse.success
+          ? {
+              requestId: modelResponse.requestId,
+              success: true,
+              result: { classification: modelResponse.output.classification },
+            }
+          : {
+              requestId: modelResponse.requestId,
+              success: false,
+              errorType: modelResponse.errorType,
+            };
+
+        response.status(200).json(edgeResponse);
+      } catch {
+        response.status(502).json({
+          requestId: parsedRequest.data.requestId,
+          success: false,
+          errorType: "MODEL_SERVICE_UNAVAILABLE",
+        } satisfies EdgeInferenceResponse);
+      }
+
+      return;
+    }
+
     console.error("Edge inference failed:", error);
 
     if (error instanceof FeatureFlagNotFoundError) {
-      const edgeResponse: EdgeInferenceResponse = {
+      response.status(503).json({
         requestId: parsedRequest.data.requestId,
         success: false,
         errorType: "ROUTING_CONFIGURATION_UNAVAILABLE",
-      };
-
-      response.status(503).json(edgeResponse);
+      } satisfies EdgeInferenceResponse);
       return;
     }
 
     if (error instanceof InvalidFeatureFlagError) {
-      const edgeResponse: EdgeInferenceResponse = {
+      response.status(500).json({
         requestId: parsedRequest.data.requestId,
         success: false,
         errorType: "INVALID_ROUTING_CONFIGURATION",
-      };
-
-      response.status(500).json(edgeResponse);
+      } satisfies EdgeInferenceResponse);
       return;
     }
 
-    const edgeResponse: EdgeInferenceResponse = {
+    response.status(502).json({
       requestId: parsedRequest.data.requestId,
       success: false,
       errorType: "MODEL_SERVICE_UNAVAILABLE",
-    };
-
-    response.status(502).json(edgeResponse);
+    } satisfies EdgeInferenceResponse);
   }
 });

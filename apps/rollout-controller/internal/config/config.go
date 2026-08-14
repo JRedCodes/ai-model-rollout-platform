@@ -6,6 +6,7 @@ type RolloutConfig struct {
 	StableModelVersionID    string
 	CandidateModelVersionID string
 	CandidatePercentage     int
+	ConfigurationVersion    int
 	FeatureFlagKey          string
 	StreamKey               string
 	StreamConsumerGroup     string

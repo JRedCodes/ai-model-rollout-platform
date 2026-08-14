@@ -1,0 +1,99 @@
+package db
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/JRedCodes/rollout-controller/internal/config"
+)
+
+type RolloutRepository struct {
+	pool *pgxpool.Pool
+}
+
+func NewRolloutRepository(pool *pgxpool.Pool) *RolloutRepository {
+	return &RolloutRepository{pool: pool}
+}
+
+// LoadActive reads the single RUNNING or HELD rollout from the DB and returns
+// its config and policy. Returns an error if no active rollout exists.
+func (r *RolloutRepository) LoadActive(ctx context.Context) (config.RolloutConfig, config.RolloutPolicy, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT
+			id, rollout_phase_id, stable_model_version_id,
+			candidate_model_version_id, candidate_percentage,
+			configuration_version, feature_flag_key,
+			min_requests_before_guard, fresh_window_size,
+			fresh_window_max_error_rate, absolute_max_error_rate,
+			controller_interval_secs, advance_min_requests,
+			advance_max_error_rate, advance_max_p95_latency_ms
+		FROM rollouts
+		WHERE status IN ('RUNNING', 'HELD')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`)
+
+	var (
+		cfg         config.RolloutConfig
+		policy      config.RolloutPolicy
+		candidateID *string
+	)
+
+	err := row.Scan(
+		&cfg.RolloutID,
+		&cfg.RolloutPhaseID,
+		&cfg.StableModelVersionID,
+		&candidateID,
+		&cfg.CandidatePercentage,
+		&cfg.ConfigurationVersion,
+		&cfg.FeatureFlagKey,
+		&policy.MinRequestsBeforeGuard,
+		&policy.FreshWindowSize,
+		&policy.FreshWindowMaxErrorRate,
+		&policy.AbsoluteMaxErrorRate,
+		&policy.ControllerIntervalSecs,
+		&policy.AdvanceMinRequests,
+		&policy.AdvanceMaxErrorRate,
+		&policy.AdvanceMaxP95LatencyMs,
+	)
+	if err != nil {
+		return cfg, policy, fmt.Errorf("load active rollout: %w", err)
+	}
+
+	if candidateID != nil {
+		cfg.CandidateModelVersionID = *candidateID
+	}
+
+	cfg.StreamKey = "telemetry:inference-completed"
+	cfg.StreamConsumerGroup = "rollout-controller"
+	cfg.StreamConsumerName = "controller-1"
+
+	return cfg, policy, nil
+}
+
+func (r *RolloutRepository) UpdateStatus(ctx context.Context, rolloutID, status string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE rollouts SET status = $1 WHERE id = $2`,
+		status, rolloutID,
+	)
+	return err
+}
+
+func (r *RolloutRepository) UpdatePercentage(ctx context.Context, rolloutID string, percentage int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE rollouts
+		SET candidate_percentage = $1, configuration_version = configuration_version + 1
+		WHERE id = $2
+	`, percentage, rolloutID)
+	return err
+}
+
+func (r *RolloutRepository) InsertDecision(ctx context.Context, id, rolloutID, action, reason, source string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO rollout_decisions (id, rollout_id, action, reason, source)
+		VALUES ($1, $2, $3, $4, $5)
+	`, id, rolloutID, action, reason, source)
+	return err
+}

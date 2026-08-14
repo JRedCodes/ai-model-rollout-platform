@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/JRedCodes/rollout-controller/internal/batchlogger"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
 )
 
@@ -17,21 +18,37 @@ type Consumer struct {
 	consumerGroup string
 	consumerName  string
 	store         *metrics.Store
+	logger        *batchlogger.BatchLogger
 }
 
-func New(rdb *redis.Client, streamKey, consumerGroup, consumerName string, store *metrics.Store) *Consumer {
+func New(
+	rdb *redis.Client,
+	streamKey, consumerGroup, consumerName string,
+	store *metrics.Store,
+	logger *batchlogger.BatchLogger,
+) *Consumer {
 	return &Consumer{
 		rdb:           rdb,
 		streamKey:     streamKey,
 		consumerGroup: consumerGroup,
 		consumerName:  consumerName,
 		store:         store,
+		logger:        logger,
 	}
 }
 
 type streamEvent struct {
-	Success   bool `json:"success"`
-	LatencyMs int  `json:"latencyMs"`
+	EventID        string  `json:"eventId"`
+	RequestID      string  `json:"requestId"`
+	UserID         string  `json:"userId"`
+	RolloutID      *string `json:"rolloutId"`
+	RolloutPhaseID *string `json:"rolloutPhaseId"`
+	ModelVersionID string  `json:"modelVersionId"`
+	Assignment     string  `json:"assignment"`
+	Success        bool    `json:"success"`
+	ErrorType      *string `json:"errorType"`
+	LatencyMs      int     `json:"latencyMs"`
+	OccurredAt     string  `json:"occurredAt"`
 }
 
 func (c *Consumer) Run(ctx context.Context) {
@@ -91,6 +108,25 @@ func (c *Consumer) process(ctx context.Context, msg redis.XMessage) {
 		Timestamp: time.Now(),
 		Success:   event.Success,
 		LatencyMs: event.LatencyMs,
+	})
+
+	occurredAt, err := time.Parse(time.RFC3339, event.OccurredAt)
+	if err != nil {
+		occurredAt = time.Now()
+	}
+
+	c.logger.Enqueue(batchlogger.EventRow{
+		ID:             event.EventID,
+		RequestID:      event.RequestID,
+		UserID:         event.UserID,
+		RolloutID:      event.RolloutID,
+		RolloutPhaseID: event.RolloutPhaseID,
+		ModelVersionID: event.ModelVersionID,
+		Assignment:     event.Assignment,
+		Success:        event.Success,
+		ErrorType:      event.ErrorType,
+		LatencyMs:      event.LatencyMs,
+		OccurredAt:     occurredAt,
 	})
 
 	c.ack(ctx, msg.ID)

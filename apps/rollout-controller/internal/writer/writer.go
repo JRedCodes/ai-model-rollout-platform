@@ -7,7 +7,10 @@ import (
 	"log"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/JRedCodes/rollout-controller/internal/db"
 )
 
 type CommandType string
@@ -22,6 +25,7 @@ const (
 type Command struct {
 	Type   CommandType
 	Reason string
+	Source string // "guard" | "controller" | "manual"
 }
 
 // percentageSteps is the advancement ladder for candidate traffic.
@@ -39,6 +43,7 @@ type featureFlagPayload struct {
 
 type Writer struct {
 	rdb               *redis.Client
+	repo              *db.RolloutRepository
 	featureFlagKey    string
 	rolloutID         string
 	rolloutPhaseID    string
@@ -54,18 +59,20 @@ type Writer struct {
 
 func New(
 	rdb *redis.Client,
+	repo *db.RolloutRepository,
 	featureFlagKey, rolloutID, rolloutPhaseID, stableID, candidateID string,
-	initialPercentage int,
+	initialPercentage, initialVersion int,
 ) *Writer {
 	return &Writer{
 		rdb:               rdb,
+		repo:              repo,
 		featureFlagKey:    featureFlagKey,
 		rolloutID:         rolloutID,
 		rolloutPhaseID:    rolloutPhaseID,
 		stableID:          stableID,
 		candidateID:       candidateID,
 		currentPercentage: initialPercentage,
-		version:           1,
+		version:           initialVersion,
 		Commands:          make(chan Command, 32),
 	}
 }
@@ -73,6 +80,12 @@ func New(
 // IsHeld is safe to call from any goroutine.
 func (w *Writer) IsHeld() bool {
 	return w.held.Load()
+}
+
+// SeedRedis writes the current rollout state to Redis without changing anything.
+// Call this on startup so the Edge Evaluator has a valid feature flag immediately.
+func (w *Writer) SeedRedis(ctx context.Context) error {
+	return w.writeActiveFlag(ctx)
 }
 
 func (w *Writer) Run(ctx context.Context) {
@@ -89,15 +102,25 @@ func (w *Writer) Run(ctx context.Context) {
 }
 
 func (w *Writer) handle(ctx context.Context, cmd Command) error {
+	source := cmd.Source
+	if source == "" {
+		source = "controller"
+	}
+
 	switch cmd.Type {
 	case CmdHold:
 		w.held.Store(true)
 		log.Printf("writer: HOLD — %s", cmd.Reason)
-		return nil
+		w.persistDecision(ctx, string(CmdHold), cmd.Reason, source)
+		return w.repo.UpdateStatus(ctx, w.rolloutID, "HELD")
 
 	case CmdRollback:
 		w.held.Store(true)
 		log.Printf("writer: ROLLBACK — %s", cmd.Reason)
+		w.persistDecision(ctx, string(CmdRollback), cmd.Reason, source)
+		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "ROLLED_BACK"); err != nil {
+			return err
+		}
 		return w.writeInactiveFlag(ctx)
 
 	case CmdAdvance:
@@ -105,10 +128,15 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 			log.Printf("writer: advance blocked — rollout is held")
 			return nil
 		}
+		w.persistDecision(ctx, string(CmdAdvance), cmd.Reason, source)
 		return w.advance(ctx, cmd.Reason)
 
 	case CmdComplete:
 		log.Printf("writer: COMPLETE — %s", cmd.Reason)
+		w.persistDecision(ctx, string(CmdComplete), cmd.Reason, source)
+		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
+			return err
+		}
 		return w.writeInactiveFlag(ctx)
 
 	default:
@@ -121,6 +149,9 @@ func (w *Writer) advance(ctx context.Context, reason string) error {
 
 	if done {
 		log.Printf("writer: COMPLETE — rollout fully ramped at %d%%", w.currentPercentage)
+		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
+			return err
+		}
 		return w.writeInactiveFlag(ctx)
 	}
 
@@ -128,7 +159,18 @@ func (w *Writer) advance(ctx context.Context, reason string) error {
 	w.currentPercentage = next
 
 	log.Printf("writer: ADVANCE %d%% → %d%% — %s", prev, next, reason)
+
+	if err := w.repo.UpdatePercentage(ctx, w.rolloutID, next); err != nil {
+		return err
+	}
+
 	return w.writeActiveFlag(ctx)
+}
+
+func (w *Writer) persistDecision(ctx context.Context, action, reason, source string) {
+	if err := w.repo.InsertDecision(ctx, uuid.NewString(), w.rolloutID, action, reason, source); err != nil {
+		log.Printf("writer: failed to persist decision: %v", err)
+	}
 }
 
 // writeActiveFlag writes the feature flag with the current candidate still in place.
@@ -136,11 +178,10 @@ func (w *Writer) writeActiveFlag(ctx context.Context) error {
 	rolloutID := w.rolloutID
 	rolloutPhaseID := w.rolloutPhaseID
 	candidateID := w.candidateID
-
 	return w.writeFeatureFlag(ctx, &rolloutID, &rolloutPhaseID, &candidateID, w.currentPercentage)
 }
 
-// writeInactiveFlag writes the feature flag with no candidate — used for rollback and completion.
+// writeInactiveFlag clears the candidate — used for rollback and completion.
 func (w *Writer) writeInactiveFlag(ctx context.Context) error {
 	return w.writeFeatureFlag(ctx, nil, nil, nil, 0)
 }

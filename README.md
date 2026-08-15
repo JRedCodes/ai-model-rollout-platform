@@ -10,7 +10,7 @@ Built as an incremental engineering project — each subsystem developed and ver
 
 ```
   ┌─────────────────┐       ┌─────────────────┐
-  │  Stress Tester  │       │    Dashboard     │  :5173
+  │  Stress Tester  │       │    Dashboard    │  :5173
   └────────┬────────┘       └────────┬────────┘
            │ POST /v1/infer          │ GET /api/rollout
            │                         │ GET /api/events (SSE)
@@ -23,7 +23,7 @@ Built as an incremental engineering project — each subsystem developed and ver
      │          │           │  ┌────────────────┐  │
 fetch│          │ xAdd      │  │ ingestion      │  │
      │          ▼           │  │ batchlogger    │  │
-     │   ┌─────────────────────┐  │ guard (5s)     │  │
+     │   ┌──────────────────┐  │  │ guard (5s)     │  │
      │   │  Redis Streams   │  │  │ controller(2m) │  │
      │   │  telemetry:infer │  │  │ writer         │  │
      │   └──────────┬───────┘  │  │ api server     │  │

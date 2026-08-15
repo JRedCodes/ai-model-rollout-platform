@@ -21,6 +21,7 @@ const (
 	CmdRollback CommandType = "ROLLBACK"
 	CmdAdvance  CommandType = "ADVANCE"
 	CmdComplete CommandType = "COMPLETE"
+	CmdResume   CommandType = "RESUME"
 )
 
 type Command struct {
@@ -52,9 +53,10 @@ type Writer struct {
 	stableID       string
 	candidateID    string
 
-	pct     atomic.Int32 // current candidate percentage; readable from any goroutine
-	held    atomic.Bool
-	version int
+	pct        atomic.Int32 // current candidate percentage; readable from any goroutine
+	held       atomic.Bool
+	rolledBack atomic.Bool
+	version    int
 
 	Commands chan Command
 }
@@ -88,9 +90,15 @@ func (w *Writer) emit(eventType string, data any) {
 	}
 }
 
-// IsHeld is safe to call from any goroutine.
+// IsHeld is safe to call from any goroutine. True for both HOLD and
+// ROLLBACK — use IsRolledBack to distinguish the two.
 func (w *Writer) IsHeld() bool {
 	return w.held.Load()
+}
+
+// IsRolledBack is safe to call from any goroutine.
+func (w *Writer) IsRolledBack() bool {
+	return w.rolledBack.Load()
 }
 
 // CurrentPercentage returns the live candidate traffic percentage.
@@ -146,6 +154,7 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 
 	case CmdRollback:
 		w.held.Store(true)
+		w.rolledBack.Store(true)
 		w.pct.Store(0)
 		log.Printf("writer: ROLLBACK — %s", cmd.Reason)
 		w.persistDecision(ctx, string(CmdRollback), cmd.Reason, source)
@@ -154,6 +163,20 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 			return err
 		}
 		return w.writeInactiveFlag(ctx)
+
+	case CmdResume:
+		if !w.held.Load() {
+			log.Printf("writer: resume ignored — rollout is not held")
+			return nil
+		}
+		w.held.Store(false)
+		log.Printf("writer: RESUME — %s", cmd.Reason)
+		w.persistDecision(ctx, string(CmdResume), cmd.Reason, source)
+		w.emit("resume", map[string]any{
+			"reason": cmd.Reason, "source": source,
+			"candidatePercentage": w.CurrentPercentage(),
+		})
+		return w.repo.UpdateStatus(ctx, w.rolloutID, "RUNNING")
 
 	case CmdAdvance:
 		if w.held.Load() {

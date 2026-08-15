@@ -95,7 +95,7 @@ npm start -- --mode=steady --reset
 
 | Mode | RPS | Duration | Candidate % start | Expected outcome |
 |------|-----|----------|-------------------|-----------------|
-| `steady` | 50 | 5 min | 10% | Controller advances 10→25→50→… every 2 min, eventually holds or completes |
+| `steady` | 50 | 10 min | 10% | Controller advances 10→25→50→75→100→COMPLETE, one step per 2-min window |
 | `burst` | 200 | 30 s | 100% | Guard trips absolute window (>5% errors) within ~5 s → hold; fresh window (>30%) → rollback |
 
 **Env vars** (all have sane defaults):

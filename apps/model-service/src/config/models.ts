@@ -18,7 +18,7 @@ export const modelConfigurations: Record<
 
   "model-v2": {
     modelVersionId: "model-v2",
-    failureRate: 0.35,
+    failureRate: 0.02,
     minLatencyMs: 50,
     maxLatencyMs: 200,
   },

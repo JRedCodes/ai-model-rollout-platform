@@ -19,13 +19,13 @@ const mode: "steady" | "burst" =
 const SCENARIOS = {
   steady: {
     rps: 50,
-    durationSecs: 300,
-    label: "50 RPS × 5 min",
+    durationSecs: 600,
+    label: "50 RPS × 10 min",
     description:
-      "Exercises controller advance → hold path. No model config changes needed.",
-    modelConfig: "model-v2 at 8% failure rate (default — no changes needed)",
+      "Exercises the full advance ladder to COMPLETE. No model config changes needed.",
+    modelConfig: "model-v2 at 2% failure rate, 50–200ms latency (default — no changes needed)",
     expected:
-      "Controller advances 10% → 25% at ~2 min, then holds when error rate exceeds 2%",
+      "Controller advances 10→25→50→75→100→COMPLETE over ~8 min (one step per 2-min window)",
   },
   burst: {
     rps: 200,

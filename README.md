@@ -65,9 +65,11 @@ fetch│          │ xAdd      │  │ ingestion      │  │
 ### Model Service — `apps/model-service` (TypeScript, port 4001)
 
 - Simulates model inference with configurable latency and failure rates
-- `model-v1`: 1% failure rate, 50–150ms latency
-- `model-v2` (steady scenario): 2% failure rate, 50–200ms latency — stays inside controller advance thresholds so the rollout can climb the full ladder
-- `model-v2` (burst/rollback scenario): temporarily set `failureRate: 0.35` in `apps/model-service/src/config/models.ts` and restart the service to exercise the guard's rollback path
+- Reads per-model config (`failureRate`, `minLatencyMs`, `maxLatencyMs`) from Redis, published by the Rollout Controller from Postgres — no redeploy needed to change simulated behavior
+- Falls back to a built-in default profile (1% failure, 50–150ms) if Redis is unreachable or returns unparseable data; a genuinely unconfigured model version still 404s
+- `model-v1` seeds at 1% failure rate, 50–150ms latency
+- `model-v2` seeds at 2% failure rate, 50–200ms latency (steady scenario) — stays inside controller advance thresholds so the rollout can climb the full ladder
+- To exercise the guard's rollback path mid-rollout, `PUT` a higher failure rate to `model-v2` (e.g. `0.35`) via the dashboard's Model configuration panel or `curl -X PUT localhost:4003/models/model-v2 -d '{"failureRate":0.35,"minLatencyMs":50,"maxLatencyMs":200}'`
 
 ### Dashboard — `apps/dashboard` (React + TypeScript, port 5173)
 
@@ -76,6 +78,7 @@ Real-time control panel for monitoring and operating a live rollout.
 - **Status panel** — rollout ID, RUNNING/HELD badge, stable and candidate model versions, current candidate traffic percentage, 5-step advancement ladder
 - **Metrics panel** — 2-minute window error rate (color-coded against advance/hold/rollback thresholds), P95 latency, window request count, total lifetime requests
 - **Decision feed** — last 50 decisions from Postgres with ADVANCE/HOLD/ROLLBACK/COMPLETE badges, reason, source, and timestamp
+- **Model configuration panel** — edit failure rate and latency range per model version; saves via `PUT /api/models/:id`, takes effect on the next inference request
 - **Force rollback** — immediately clears candidate traffic, bypassing the guard and controller
 - **Live updates via SSE** — the controller pushes an event on every state transition; the dashboard invalidates and refetches within milliseconds, no polling lag
 
@@ -237,6 +240,13 @@ npm run dev --workspace @rollout-platform/dashboard
 | `TELEMETRY_STREAM_KEY` | `telemetry:inference-completed` | Redis Stream for telemetry events |
 | `STABLE_MODEL_FALLBACK_ID` | `model-v1` | Model used when Redis is unreachable |
 
+### Model Service (`apps/model-service/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `4001` | HTTP port |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL — source of per-model simulation config |
+
 ### Rollout Controller (environment or shell)
 
 | Variable | Default | Description |
@@ -279,6 +289,9 @@ curl -X POST http://localhost:4002/v1/infer \
 | `GET` | `/rollout/metrics` | Live metrics snapshot (error rates, P95 latency, window counts) |
 | `GET` | `/rollout/decisions` | Last 50 decisions for the active rollout |
 | `POST` | `/rollout/rollback` | Force an immediate rollback, bypassing guard/controller |
+| `GET` | `/models` | List model configurations (failure rate, latency range) |
+| `GET` | `/models/{id}` | Get a single model's configuration |
+| `PUT` | `/models/{id}` | Update a model's failure rate and latency range — persists to Postgres, publishes to Redis, broadcasts an SSE event |
 | `GET` | `/events` | SSE stream — pushes `advance`, `hold`, `rollback`, `complete` events to connected clients |
 
 ---
@@ -351,6 +364,9 @@ One row per inference, written by the batch logger in 10-second bulk flushes. In
 ### `rollout_decisions`
 Append-only audit log of every decision the guard, controller, or manual API makes. Fields: `action` (HOLD / ROLLBACK / ADVANCE / COMPLETE), `reason`, `source` (guard / controller / manual), `decided_at`.
 
+### `model_configurations`
+Per-model-version simulation params (`failure_rate`, `min_latency_ms`, `max_latency_ms`), edited via the Rollout Controller's `/models/{id}` API. Published to Redis on every write so Model Service picks up changes without a restart.
+
 ---
 
 ## Roadmap
@@ -365,7 +381,7 @@ Append-only audit log of every decision the guard, controller, or manual API mak
 - [x] Redis resilience — startup seeding, heartbeat, Edge Evaluator fallback
 - [x] Stress tester — steady advance and burst guard-rollback scenarios, live monitor, final report
 - [x] React dashboard — live status panel, metrics panel, decision feed, SSE-driven updates, force rollback
-- [ ] Dynamic model configuration — Postgres-backed model params, mid-rollout config changes via dashboard
+- [x] Dynamic model configuration — Postgres-backed model params, mid-rollout config changes via dashboard
 - [ ] Management API — create and configure rollouts via HTTP (no psql required)
 - [ ] Promotion loop — on COMPLETE, promote candidate to stable and prepare next rollout slot
 - [ ] Multi-tenant rollouts (per-user model pairs)

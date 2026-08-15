@@ -75,7 +75,7 @@ export class Runner {
 }
 
 async function sendRequest(userId: string): Promise<boolean> {
-  const resp = await fetch(`${EDGE_URL}/infer`, {
+  const resp = await fetch(`${EDGE_URL}/v1/infer`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

@@ -75,7 +75,37 @@ Built as an incremental engineering project — each subsystem developed and ver
 
 - Simulates model inference with configurable latency and failure rates
 - `model-v1`: 1% failure rate, 50–150ms latency
-- `model-v2`: 8% failure rate, 100–300ms latency
+- `model-v2` (steady scenario): 2% failure rate, 50–200ms latency — stays inside controller advance thresholds so the rollout can climb the ladder
+- `model-v2` (burst/rollback scenario): temporarily set `failureRate: 0.35` in `apps/model-service/src/config/models.ts` and restart the service to exercise the guard's rollback path
+
+### Stress Tester — `apps/stress-tester` (TypeScript, CLI)
+
+Local CLI tool for end-to-end load testing. Generates HTTP traffic against the Edge Evaluator, monitors rollout state changes via the Rollout Controller API, and prints a final report.
+
+```bash
+# From apps/stress-tester
+npm start -- --mode=steady   # 50 RPS × 5 min — exercises advance → hold
+npm start -- --mode=burst    # 200 RPS × 30 s — exercises guard rollback
+
+# --reset: truncates inference_events + rollout_decisions and resets the
+# rollout row to RUNNING at the appropriate starting percentage.
+# Always restart the rollout controller after --reset to reload in-memory state.
+npm start -- --mode=steady --reset
+```
+
+| Mode | RPS | Duration | Candidate % start | Expected outcome |
+|------|-----|----------|-------------------|-----------------|
+| `steady` | 50 | 5 min | 10% | Controller advances 10→25→50→… every 2 min, eventually holds or completes |
+| `burst` | 200 | 30 s | 100% | Guard trips absolute window (>5% errors) within ~5 s → hold; fresh window (>30%) → rollback |
+
+**Env vars** (all have sane defaults):
+
+| Variable | Default |
+|----------|---------|
+| `EDGE_EVALUATOR_URL` | `http://localhost:4002` |
+| `ROLLOUT_CONTROLLER_URL` | `http://localhost:4003` |
+| `DATABASE_URL` | `postgres://localhost:5432/rollout_platform` |
+| `ROLLOUT_ID` | `rollout-001` |
 
 ### Rollout Controller — `apps/rollout-controller` (Go, port 4003)
 
@@ -321,7 +351,7 @@ Append-only audit log of every decision the guard, controller, or manual API mak
 - [x] Go rollout controller — ingestion, guard, controller, writer, API
 - [x] PostgreSQL persistence — migrations, batch logger, decision audit log
 - [x] Redis resilience — startup seeding, heartbeat, Edge Evaluator fallback
-- [ ] Stress tester
+- [x] Stress tester — steady advance and burst guard-rollback scenarios, live monitor, final report
 - [ ] React dashboard with rollout control panel
 - [ ] Management API (create / configure rollouts via HTTP)
 - [ ] Multi-tenant rollouts (per-user model pairs)

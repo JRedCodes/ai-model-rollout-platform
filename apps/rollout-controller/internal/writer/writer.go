@@ -43,15 +43,15 @@ type featureFlagPayload struct {
 }
 
 type Writer struct {
-	rdb               *redis.Client
-	repo              *db.RolloutRepository
-	featureFlagKey    string
-	rolloutID         string
-	rolloutPhaseID    string
-	stableID          string
-	candidateID       string
-	currentPercentage int
+	rdb            *redis.Client
+	repo           *db.RolloutRepository
+	featureFlagKey string
+	rolloutID      string
+	rolloutPhaseID string
+	stableID       string
+	candidateID    string
 
+	pct     atomic.Int32 // current candidate percentage; readable from any goroutine
 	held    atomic.Bool
 	version int
 
@@ -64,23 +64,30 @@ func New(
 	featureFlagKey, rolloutID, rolloutPhaseID, stableID, candidateID string,
 	initialPercentage, initialVersion int,
 ) *Writer {
-	return &Writer{
-		rdb:               rdb,
-		repo:              repo,
-		featureFlagKey:    featureFlagKey,
-		rolloutID:         rolloutID,
-		rolloutPhaseID:    rolloutPhaseID,
-		stableID:          stableID,
-		candidateID:       candidateID,
-		currentPercentage: initialPercentage,
-		version:           initialVersion,
-		Commands:          make(chan Command, 32),
+	w := &Writer{
+		rdb:            rdb,
+		repo:           repo,
+		featureFlagKey: featureFlagKey,
+		rolloutID:      rolloutID,
+		rolloutPhaseID: rolloutPhaseID,
+		stableID:       stableID,
+		candidateID:    candidateID,
+		version:        initialVersion,
+		Commands:       make(chan Command, 32),
 	}
+	w.pct.Store(int32(initialPercentage))
+	return w
 }
 
 // IsHeld is safe to call from any goroutine.
 func (w *Writer) IsHeld() bool {
 	return w.held.Load()
+}
+
+// CurrentPercentage returns the live candidate traffic percentage.
+// Safe to call from any goroutine.
+func (w *Writer) CurrentPercentage() int {
+	return int(w.pct.Load())
 }
 
 // SeedRedis writes the current rollout state to Redis without changing anything.
@@ -126,6 +133,7 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 
 	case CmdRollback:
 		w.held.Store(true)
+		w.pct.Store(0)
 		log.Printf("writer: ROLLBACK — %s", cmd.Reason)
 		w.persistDecision(ctx, string(CmdRollback), cmd.Reason, source)
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "ROLLED_BACK"); err != nil {
@@ -142,6 +150,7 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 		return w.advance(ctx, cmd.Reason)
 
 	case CmdComplete:
+		w.pct.Store(0)
 		log.Printf("writer: COMPLETE — %s", cmd.Reason)
 		w.persistDecision(ctx, string(CmdComplete), cmd.Reason, source)
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
@@ -155,20 +164,19 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 }
 
 func (w *Writer) advance(ctx context.Context, reason string) error {
-	next, done := nextPercentage(w.currentPercentage)
+	current := int(w.pct.Load())
+	next, done := nextPercentage(current)
 
 	if done {
-		log.Printf("writer: COMPLETE — rollout fully ramped at %d%%", w.currentPercentage)
+		log.Printf("writer: COMPLETE — rollout fully ramped at %d%%", current)
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
 			return err
 		}
 		return w.writeInactiveFlag(ctx)
 	}
 
-	prev := w.currentPercentage
-	w.currentPercentage = next
-
-	log.Printf("writer: ADVANCE %d%% → %d%% — %s", prev, next, reason)
+	w.pct.Store(int32(next))
+	log.Printf("writer: ADVANCE %d%% → %d%% — %s", current, next, reason)
 
 	if err := w.repo.UpdatePercentage(ctx, w.rolloutID, next); err != nil {
 		return err
@@ -188,7 +196,7 @@ func (w *Writer) writeActiveFlag(ctx context.Context) error {
 	rolloutID := w.rolloutID
 	rolloutPhaseID := w.rolloutPhaseID
 	candidateID := w.candidateID
-	return w.writeFeatureFlag(ctx, &rolloutID, &rolloutPhaseID, &candidateID, w.currentPercentage)
+	return w.writeFeatureFlag(ctx, &rolloutID, &rolloutPhaseID, &candidateID, int(w.pct.Load()))
 }
 
 // writeInactiveFlag clears the candidate — used for rollback and completion.

@@ -68,7 +68,7 @@ func (s *Server) handleGetRollout(w http.ResponseWriter, r *http.Request) {
 		"rolloutPhaseId":          s.rolloutCfg.RolloutPhaseID,
 		"stableModelVersionId":    s.rolloutCfg.StableModelVersionID,
 		"candidateModelVersionId": s.rolloutCfg.CandidateModelVersionID,
-		"candidatePercentage":     s.rolloutCfg.CandidatePercentage,
+		"candidatePercentage":     s.w.CurrentPercentage(),
 		"held":                    s.w.IsHeld(),
 	})
 }

@@ -101,14 +101,20 @@ export class Monitor {
         const prev = this.lastState;
         const t = this.elapsed();
 
-        if (!prev.held && current.held && current.candidatePercentage === 0) {
+        if (prev.candidatePercentage > 0 && current.candidatePercentage === 0) {
+          // pct dropped to 0 — rollback (held=true) or complete (held=false)
+          const isRollback = current.held;
           const transition: Transition = {
             elapsed: t,
-            description: `ROLLBACK — candidate cleared, all traffic → stable`,
+            description: isRollback
+              ? `ROLLBACK — candidate cleared, all traffic → stable`
+              : `COMPLETE — rollout fully promoted`,
           };
           this.transitions.push(transition);
           process.stdout.write(
-            `${c.red(`  ↙ [${t}] ${transition.description}`)}\n`,
+            isRollback
+              ? `${c.red(`  ↙ [${t}] ${transition.description}`)}\n`
+              : `${c.green(`  ✓ [${t}] ${transition.description}`)}\n`,
           );
         } else if (!prev.held && current.held) {
           const transition: Transition = {

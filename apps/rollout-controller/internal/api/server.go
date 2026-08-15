@@ -198,8 +198,7 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeModelConfigError(w http.ResponseWriter, err error) {
-	var notFound *modelconfig.NotFoundError
-	if errors.As(err, &notFound) {
+	if notFound, ok := errors.AsType[*modelconfig.NotFoundError](err); ok {
 		http.Error(w, notFound.Error(), http.StatusNotFound)
 		return
 	}

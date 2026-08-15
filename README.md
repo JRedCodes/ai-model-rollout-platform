@@ -9,54 +9,45 @@ Built as an incremental engineering project — each subsystem developed and ver
 ## Architecture
 
 ```
-                    ┌─────────────────┐
-                    │  Stress Tester  │
-                    └────────┬────────┘
-                             │ POST /v1/infer
-                             ▼
-                    ┌─────────────────┐
-                    │  Edge Evaluator │  :4002
-                    │  (TypeScript)   │
-                    └──┬──────────┬───┘
-                       │          │
-              fetch    │          │ xAdd
-              to model │          ▼
-                       │   ┌─────────────────────┐
-                       │   │  Redis Streams       │
-                       │   │  telemetry:inference │
-                       │   └──────────┬──────────┘
-                       │              │ XReadGroup
-                       ▼              ▼
-              ┌──────────────┐  ┌──────────────────────┐
-              │ Model Service│  │  Rollout Controller  │  :4003
-              │ (TypeScript) │  │  (Go)                │
-              │  :4001       │  │                      │
-              └──────────────┘  │  ┌────────────────┐  │
-                                │  │ ingestion      │  │
-                                │  │ batchlogger    │  │
-                                │  │ guard (5s)     │  │
-                                │  │ controller(2m) │  │
-                                │  │ writer         │  │
-                                │  │ api server     │  │
-                                │  └───────┬────────┘  │
-                                └──────────┼───────────┘
-                                           │
-                          ┌────────────────┴───────────────┐
-                          │                                │
-                          ▼                                ▼
-                   ┌─────────────┐                ┌──────────────┐
-                   │    Redis    │                │  PostgreSQL  │
-                   │ feature flag│                │  rollouts    │
-                   │ (read by    │                │  inference_  │
-                   │  edge eval) │                │  events      │
-                   └─────────────┘                │  rollout_    │
-                                                  │  decisions   │
-                                                  └──────────────┘
+  ┌─────────────────┐       ┌─────────────────┐
+  │  Stress Tester  │       │    Dashboard     │  :5173
+  └────────┬────────┘       └────────┬────────┘
+           │ POST /v1/infer          │ GET /api/rollout
+           │                         │ GET /api/events (SSE)
+           │                         │ PUT /api/models/:id
+           ▼                         ▼
+  ┌─────────────────┐       ┌──────────────────────┐
+  │  Edge Evaluator │  :4002│  Rollout Controller  │  :4003
+  │  (TypeScript)   │       │  (Go)                │
+  └──┬──────────┬───┘       │                      │
+     │          │           │  ┌────────────────┐  │
+fetch│          │ xAdd      │  │ ingestion      │  │
+     │          ▼           │  │ batchlogger    │  │
+     │   ┌─────────────────────┐  │ guard (5s)     │  │
+     │   │  Redis Streams   │  │  │ controller(2m) │  │
+     │   │  telemetry:infer │  │  │ writer         │  │
+     │   └──────────┬───────┘  │  │ api server     │  │
+     │              │ XReadGroup│  └───────┬────────┘  │
+     ▼              ▼           └──────────┼───────────┘
+┌──────────────┐                          │
+│ Model Service│            ┌─────────────┴──────────────┐
+│ (TypeScript) │            │                            │
+│  :4001       │            ▼                            ▼
+└──────────────┘     ┌─────────────┐             ┌──────────────┐
+                     │    Redis    │             │  PostgreSQL  │
+                     │ feature flag│             │  rollouts    │
+                     │ (read by    │             │  inference_  │
+                     │  edge eval) │             │  events      │
+                     └─────────────┘             │  rollout_    │
+                                                 │  decisions   │
+                                                 └──────────────┘
 ```
 
 **Request flow:** Every inference request hits the Edge Evaluator, which reads the active feature flag from Redis, deterministically assigns the user to stable or candidate model traffic, forwards to the Model Service, and publishes an `InferenceCompletedEvent` to a Redis Stream.
 
 **Control flow:** The Rollout Controller consumes the stream, evaluates metrics every 5 seconds (guard) and every 2 minutes (controller), and writes decisions back to both Postgres and Redis.
+
+**Dashboard flow:** The Dashboard connects to the controller's SSE stream (`GET /events`) and receives a push event the moment any decision fires. All other data is fetched via REST and invalidated on each SSE push.
 
 ---
 
@@ -75,8 +66,23 @@ Built as an incremental engineering project — each subsystem developed and ver
 
 - Simulates model inference with configurable latency and failure rates
 - `model-v1`: 1% failure rate, 50–150ms latency
-- `model-v2` (steady scenario): 2% failure rate, 50–200ms latency — stays inside controller advance thresholds so the rollout can climb the ladder
+- `model-v2` (steady scenario): 2% failure rate, 50–200ms latency — stays inside controller advance thresholds so the rollout can climb the full ladder
 - `model-v2` (burst/rollback scenario): temporarily set `failureRate: 0.35` in `apps/model-service/src/config/models.ts` and restart the service to exercise the guard's rollback path
+
+### Dashboard — `apps/dashboard` (React + TypeScript, port 5173)
+
+Real-time control panel for monitoring and operating a live rollout.
+
+- **Status panel** — rollout ID, RUNNING/HELD badge, stable and candidate model versions, current candidate traffic percentage, 5-step advancement ladder
+- **Metrics panel** — 2-minute window error rate (color-coded against advance/hold/rollback thresholds), P95 latency, window request count, total lifetime requests
+- **Decision feed** — last 50 decisions from Postgres with ADVANCE/HOLD/ROLLBACK/COMPLETE badges, reason, source, and timestamp
+- **Force rollback** — immediately clears candidate traffic, bypassing the guard and controller
+- **Live updates via SSE** — the controller pushes an event on every state transition; the dashboard invalidates and refetches within milliseconds, no polling lag
+
+```bash
+npm run dev --workspace @rollout-platform/dashboard
+# → http://localhost:5173
+```
 
 ### Stress Tester — `apps/stress-tester` (TypeScript, CLI)
 
@@ -84,8 +90,8 @@ Local CLI tool for end-to-end load testing. Generates HTTP traffic against the E
 
 ```bash
 # From apps/stress-tester
-npm start -- --mode=steady   # 50 RPS × 5 min — exercises advance → hold
-npm start -- --mode=burst    # 200 RPS × 30 s — exercises guard rollback
+npm start -- --mode=steady   # 50 RPS × 10 min — full advance ladder to COMPLETE
+npm start -- --mode=burst    # 200 RPS × 30 s  — exercises guard rollback
 
 # --reset: truncates inference_events + rollout_decisions and resets the
 # rollout row to RUNNING at the appropriate starting percentage.
@@ -117,8 +123,8 @@ Single binary with six goroutines:
 | `batchlogger` | 10s | Bulk-flushes inference events to `inference_events` via `COPY` |
 | `guard` | 5s | Early rollback detection — fresh window (last 50 reqs) and absolute window |
 | `controller` | 2 min | Evaluates error rate + P95 latency; advances or holds the rollout |
-| `writer` | event-driven + 60s heartbeat | Sole owner of Redis and Postgres writes; re-seeds the Redis feature flag every 60s |
-| `api` | — | HTTP read API + manual rollback |
+| `writer` | event-driven + 60s heartbeat | Sole owner of Redis and Postgres writes; re-seeds the Redis feature flag every 60s; broadcasts SSE events to connected dashboard clients |
+| `api` | — | HTTP read/write API, SSE hub, manual rollback |
 
 ### Contracts — `packages/contracts` (TypeScript)
 
@@ -132,7 +138,8 @@ Shared Zod schemas for all service boundaries, organised into subdirectories: `i
 |-------|-----------|
 | Language (services) | TypeScript 7, Go 1.24 |
 | Runtime | Node.js 20+, Go toolchain |
-| HTTP | Express 5 |
+| HTTP | Express 5, Go `net/http` |
+| Frontend | React 19, Vite 6, Tailwind CSS 3, TanStack Query |
 | Validation | Zod 4 |
 | Caching / messaging | Redis 7 (Docker), Redis Streams |
 | Database | PostgreSQL 18 |
@@ -210,6 +217,9 @@ npm run dev --workspace @rollout-platform/edge-evaluator
 
 # Rollout Controller (run from its directory)
 cd apps/rollout-controller && go run .
+
+# Dashboard (optional — open http://localhost:5173)
+npm run dev --workspace @rollout-platform/dashboard
 ```
 
 ---
@@ -267,7 +277,9 @@ curl -X POST http://localhost:4002/v1/infer \
 | `GET` | `/health` | Health check |
 | `GET` | `/rollout` | Current rollout state (model versions, percentage, held status) |
 | `GET` | `/rollout/metrics` | Live metrics snapshot (error rates, P95 latency, window counts) |
+| `GET` | `/rollout/decisions` | Last 50 decisions for the active rollout |
 | `POST` | `/rollout/rollback` | Force an immediate rollback, bypassing guard/controller |
+| `GET` | `/events` | SSE stream — pushes `advance`, `hold`, `rollback`, `complete` events to connected clients |
 
 ---
 
@@ -295,9 +307,9 @@ The controller advances one step per successful 2-minute evaluation window.
 
 **Guard always wins.** When the guard issues a rollback and the controller would advance, the hold flag blocks the advance. Only a manual rollback clears a guard-triggered hold.
 
-### In-progress rollouts are immutable
+### Holds require manual intervention
 
-Config cannot be changed while a rollout is `RUNNING` or `HELD`. The only action available on a live rollout is **Force Rollback** (`POST /rollout/rollback`). To reconfigure, let the rollout complete or roll back, then insert a new row into `rollouts`.
+A hold does not automatically clear when metrics recover. A held rollout can only be unstuck via `POST /rollout/rollback` (which rolls back to the stable model). Restarting from a good baseline requires a new rollout row.
 
 ---
 
@@ -352,7 +364,9 @@ Append-only audit log of every decision the guard, controller, or manual API mak
 - [x] PostgreSQL persistence — migrations, batch logger, decision audit log
 - [x] Redis resilience — startup seeding, heartbeat, Edge Evaluator fallback
 - [x] Stress tester — steady advance and burst guard-rollback scenarios, live monitor, final report
-- [ ] React dashboard with rollout control panel
-- [ ] Management API (create / configure rollouts via HTTP)
+- [x] React dashboard — live status panel, metrics panel, decision feed, SSE-driven updates, force rollback
+- [ ] Dynamic model configuration — Postgres-backed model params, mid-rollout config changes via dashboard
+- [ ] Management API — create and configure rollouts via HTTP (no psql required)
+- [ ] Promotion loop — on COMPLETE, promote candidate to stable and prepare next rollout slot
 - [ ] Multi-tenant rollouts (per-user model pairs)
 - [ ] Authentication

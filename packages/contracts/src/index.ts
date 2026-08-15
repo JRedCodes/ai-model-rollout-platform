@@ -4,3 +4,4 @@ export * from './inference/edge-inference-request.js';
 export * from './inference/edge-inference-response.js';
 export * from './rollout/feature-flag.js';
 export * from './telemetry/inference-completed-event.js';
+export * from './simulation/model-simulation-profile.js';

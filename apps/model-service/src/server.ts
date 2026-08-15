@@ -1,8 +1,19 @@
-import { app } from './app.js';
-import { env } from './config/env.js';
+import { app } from "./app.js";
+import { env } from "./config/env.js";
+import { connectRedis } from "./redis/redis.client.js";
 
-const port = env.PORT;
+async function startServer(): Promise<void> {
+  try {
+    await connectRedis();
 
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
+    app.listen(env.PORT, () => {
+      console.log(`Model Service listening on port ${env.PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start Model Service:", error);
+
+    process.exit(1);
+  }
+}
+
+void startServer();

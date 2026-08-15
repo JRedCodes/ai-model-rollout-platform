@@ -4,16 +4,11 @@ import type {
 } from "@rollout-platform/contracts";
 
 import {
-  modelConfigurations,
-  type ModelSimulationConfig,
-} from "../config/models.js";
+  getModelConfig,
+  UnsupportedModelVersionError,
+} from "../repositories/model-config.repository.js";
 
-export class UnsupportedModelVersionError extends Error {
-  constructor(modelVersionId: string) {
-    super(`Unsupported model version: ${modelVersionId}`);
-    this.name = "UnsupportedModelVersionError";
-  }
-}
+export { UnsupportedModelVersionError };
 
 function randomInteger(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -25,23 +20,11 @@ function wait(milliseconds: number): Promise<void> {
   });
 }
 
-function getModelConfiguration(
-  modelVersionId: string,
-): ModelSimulationConfig {
-  const configuration = modelConfigurations[modelVersionId];
-
-  if (!configuration) {
-    throw new UnsupportedModelVersionError(modelVersionId);
-  }
-
-  return configuration;
-}
-
 export async function simulateInference(
   modelVersionId: string,
   request: ModelInferenceRequest,
 ): Promise<ModelInferenceResponse> {
-  const configuration = getModelConfiguration(modelVersionId);
+  const configuration = await getModelConfig(modelVersionId);
 
   const latencyMs = randomInteger(
     configuration.minLatencyMs,

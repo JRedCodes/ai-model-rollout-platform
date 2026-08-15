@@ -35,9 +35,10 @@ const SCENARIOS = {
       "Exercises guard fresh-window rollback. Requires a model config change.",
     modelConfig: [
       "model-v2 must be at 35% failure rate",
-      "  Edit:    apps/model-service/src/config/models.ts",
-      "  Change:  failureRate: 0.08  →  failureRate: 0.35",
-      "  Restart: npm run dev --workspace @rollout-platform/model-service",
+      "  Set:  curl -X PUT localhost:4003/models/model-v2 \\",
+      "          -d '{\"failureRate\":0.35,\"minLatencyMs\":50,\"maxLatencyMs\":200}'",
+      "        (or use the dashboard's Model configuration panel)",
+      "        Takes effect immediately — no restart needed.",
       "",
       "  --reset also sets candidate_percentage to 100 so all traffic hits the candidate.",
     ].join("\n  "),

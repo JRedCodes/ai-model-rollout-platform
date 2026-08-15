@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,25 +12,39 @@ import (
 	"github.com/JRedCodes/rollout-controller/internal/config"
 	"github.com/JRedCodes/rollout-controller/internal/db"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
+	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
 	"github.com/JRedCodes/rollout-controller/internal/writer"
 )
 
 type Server struct {
-	rolloutCfg config.RolloutConfig
-	store      *metrics.Store
-	w          *writer.Writer
-	repo       *db.RolloutRepository
-	hub        *SSEHub
-	httpServer *http.Server
+	rolloutCfg      config.RolloutConfig
+	store           *metrics.Store
+	w               *writer.Writer
+	repo            *db.RolloutRepository
+	hub             *SSEHub
+	modelConfigRepo *modelconfig.Repository
+	modelConfigPub  *modelconfig.Seeder
+	httpServer      *http.Server
 }
 
-func New(port int, rolloutCfg config.RolloutConfig, store *metrics.Store, w *writer.Writer, repo *db.RolloutRepository, hub *SSEHub) *Server {
+func New(
+	port int,
+	rolloutCfg config.RolloutConfig,
+	store *metrics.Store,
+	w *writer.Writer,
+	repo *db.RolloutRepository,
+	hub *SSEHub,
+	modelConfigRepo *modelconfig.Repository,
+	modelConfigPub *modelconfig.Seeder,
+) *Server {
 	s := &Server{
-		rolloutCfg: rolloutCfg,
-		store:      store,
-		w:          w,
-		repo:       repo,
-		hub:        hub,
+		rolloutCfg:      rolloutCfg,
+		store:           store,
+		w:               w,
+		repo:            repo,
+		hub:             hub,
+		modelConfigRepo: modelConfigRepo,
+		modelConfigPub:  modelConfigPub,
 	}
 
 	mux := http.NewServeMux()
@@ -38,6 +53,9 @@ func New(port int, rolloutCfg config.RolloutConfig, store *metrics.Store, w *wri
 	mux.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
 	mux.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)
 	mux.HandleFunc("POST /rollout/rollback", s.handleRollback)
+	mux.HandleFunc("GET /models", s.handleListModels)
+	mux.HandleFunc("GET /models/{id}", s.handleGetModel)
+	mux.HandleFunc("PUT /models/{id}", s.handleUpdateModel)
 	mux.Handle("GET /events", hub)
 
 	s.httpServer = &http.Server{
@@ -107,6 +125,87 @@ func (s *Server) handleGetDecisions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, decisions)
 }
 
+func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	profiles, err := s.modelConfigRepo.List(r.Context())
+	if err != nil {
+		log.Printf("api: list model configs: %v", err)
+		http.Error(w, "failed to load model configurations", http.StatusInternalServerError)
+		return
+	}
+	if profiles == nil {
+		profiles = []modelconfig.Profile{}
+	}
+	writeJSON(w, http.StatusOK, profiles)
+}
+
+func (s *Server) handleGetModel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	profile, err := s.modelConfigRepo.Get(r.Context(), id)
+	if err != nil {
+		s.writeModelConfigError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+type updateModelRequest struct {
+	FailureRate  *float64 `json:"failureRate"`
+	MinLatencyMs *int     `json:"minLatencyMs"`
+	MaxLatencyMs *int     `json:"maxLatencyMs"`
+}
+
+func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var body updateModelRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.FailureRate == nil || body.MinLatencyMs == nil || body.MaxLatencyMs == nil {
+		http.Error(w, "failureRate, minLatencyMs, and maxLatencyMs are required", http.StatusBadRequest)
+		return
+	}
+	if *body.FailureRate < 0 || *body.FailureRate > 1 {
+		http.Error(w, "failureRate must be between 0 and 1", http.StatusBadRequest)
+		return
+	}
+	if *body.MinLatencyMs <= 0 || *body.MaxLatencyMs <= 0 {
+		http.Error(w, "minLatencyMs and maxLatencyMs must be positive", http.StatusBadRequest)
+		return
+	}
+	if *body.MinLatencyMs > *body.MaxLatencyMs {
+		http.Error(w, "minLatencyMs must be <= maxLatencyMs", http.StatusBadRequest)
+		return
+	}
+
+	profile, err := s.modelConfigRepo.Update(r.Context(), id, *body.FailureRate, *body.MinLatencyMs, *body.MaxLatencyMs)
+	if err != nil {
+		s.writeModelConfigError(w, err)
+		return
+	}
+
+	if err := s.modelConfigPub.Publish(r.Context(), profile); err != nil {
+		log.Printf("api: failed to publish model config to redis: %v", err)
+		http.Error(w, "saved but failed to propagate to redis", http.StatusInternalServerError)
+		return
+	}
+
+	s.hub.Broadcast("model-config-updated", profile)
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) writeModelConfigError(w http.ResponseWriter, err error) {
+	if notFound, ok := errors.AsType[*modelconfig.NotFoundError](err); ok {
+		http.Error(w, notFound.Error(), http.StatusNotFound)
+		return
+	}
+	log.Printf("api: model config error: %v", err)
+	http.Error(w, "failed to load model configuration", http.StatusInternalServerError)
+}
+
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 	s.w.Commands <- writer.Command{
 		Type:   writer.CmdRollback,
@@ -127,7 +226,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

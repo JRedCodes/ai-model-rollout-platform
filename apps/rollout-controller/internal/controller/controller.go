@@ -47,8 +47,8 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 func (c *Controller) evaluate() {
-	if c.w.IsHeld() {
-		log.Printf("controller: rollout is held — skipping evaluation")
+	if c.w.IsRolledBack() {
+		log.Printf("controller: rollout is rolled back — skipping evaluation")
 		return
 	}
 
@@ -61,9 +61,26 @@ func (c *Controller) evaluate() {
 
 	errorRate := metrics.ErrorRate(window)
 	p95 := metrics.P95Latency(window)
+	healthy := errorRate <= c.policy.AdvanceMaxErrorRate && p95 <= c.policy.AdvanceMaxP95LatencyMs
 
 	log.Printf("controller: window stats — %d reqs, %.1f%% errors, P95 %dms",
 		len(window), errorRate*100, p95)
+
+	if held := c.w.IsHeld(); held {
+		if !healthy {
+			log.Printf("controller: still held — error rate %.1f%%, P95 %dms remain outside thresholds",
+				errorRate*100, p95)
+			return
+		}
+		log.Printf("controller: window recovered — error rate %.1f%%, P95 %dms — resuming (not advancing yet)",
+			errorRate*100, p95)
+		c.w.Commands <- writer.Command{
+			Type: writer.CmdResume,
+			Reason: fmt.Sprintf("error rate %.1f%%, P95 %dms recovered within thresholds",
+				errorRate*100, p95),
+		}
+		return
+	}
 
 	if errorRate > c.policy.AdvanceMaxErrorRate {
 		log.Printf("controller: error rate %.1f%% > %.1f%% advance threshold — holding",

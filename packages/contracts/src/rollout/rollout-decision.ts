@@ -5,6 +5,7 @@ export const rolloutDecisionActionSchema = z.enum([
   "HOLD",
   "ROLLBACK",
   "COMPLETE",
+  "RESUME",
 ]);
 
 export const rolloutDecisionProposalSchema = z.object({

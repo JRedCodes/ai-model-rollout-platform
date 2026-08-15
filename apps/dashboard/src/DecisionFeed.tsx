@@ -7,6 +7,7 @@ const ACTION_STYLES: Record<string, { badge: string; dot: string }> = {
   HOLD: { badge: "bg-amber-500/10 text-amber-400 ring-amber-500/20", dot: "bg-amber-400" },
   ROLLBACK: { badge: "bg-red-500/10 text-red-400 ring-red-500/20", dot: "bg-red-400" },
   COMPLETE: { badge: "bg-sky-500/10 text-sky-400 ring-sky-500/20", dot: "bg-sky-400" },
+  RESUME: { badge: "bg-cyan-500/10 text-cyan-400 ring-cyan-500/20", dot: "bg-cyan-400" },
 };
 
 function fallbackStyle() {

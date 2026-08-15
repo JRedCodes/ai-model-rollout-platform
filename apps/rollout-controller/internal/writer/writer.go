@@ -45,6 +45,7 @@ type featureFlagPayload struct {
 type Writer struct {
 	rdb            *redis.Client
 	repo           *db.RolloutRepository
+	broadcast      func(string, any)
 	featureFlagKey string
 	rolloutID      string
 	rolloutPhaseID string
@@ -61,12 +62,14 @@ type Writer struct {
 func New(
 	rdb *redis.Client,
 	repo *db.RolloutRepository,
+	broadcast func(string, any),
 	featureFlagKey, rolloutID, rolloutPhaseID, stableID, candidateID string,
 	initialPercentage, initialVersion int,
 ) *Writer {
 	w := &Writer{
 		rdb:            rdb,
 		repo:           repo,
+		broadcast:      broadcast,
 		featureFlagKey: featureFlagKey,
 		rolloutID:      rolloutID,
 		rolloutPhaseID: rolloutPhaseID,
@@ -77,6 +80,12 @@ func New(
 	}
 	w.pct.Store(int32(initialPercentage))
 	return w
+}
+
+func (w *Writer) emit(eventType string, data any) {
+	if w.broadcast != nil {
+		w.broadcast(eventType, data)
+	}
 }
 
 // IsHeld is safe to call from any goroutine.
@@ -129,6 +138,10 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 		w.held.Store(true)
 		log.Printf("writer: HOLD — %s", cmd.Reason)
 		w.persistDecision(ctx, string(CmdHold), cmd.Reason, source)
+		w.emit("hold", map[string]any{
+			"reason": cmd.Reason, "source": source,
+			"candidatePercentage": w.CurrentPercentage(),
+		})
 		return w.repo.UpdateStatus(ctx, w.rolloutID, "HELD")
 
 	case CmdRollback:
@@ -136,6 +149,7 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 		w.pct.Store(0)
 		log.Printf("writer: ROLLBACK — %s", cmd.Reason)
 		w.persistDecision(ctx, string(CmdRollback), cmd.Reason, source)
+		w.emit("rollback", map[string]any{"reason": cmd.Reason, "source": source})
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "ROLLED_BACK"); err != nil {
 			return err
 		}
@@ -147,12 +161,13 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 			return nil
 		}
 		w.persistDecision(ctx, string(CmdAdvance), cmd.Reason, source)
-		return w.advance(ctx, cmd.Reason)
+		return w.advance(ctx, cmd.Reason, source)
 
 	case CmdComplete:
 		w.pct.Store(0)
 		log.Printf("writer: COMPLETE — %s", cmd.Reason)
 		w.persistDecision(ctx, string(CmdComplete), cmd.Reason, source)
+		w.emit("complete", map[string]any{"reason": cmd.Reason, "source": source})
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
 			return err
 		}
@@ -163,12 +178,14 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 	}
 }
 
-func (w *Writer) advance(ctx context.Context, reason string) error {
+func (w *Writer) advance(ctx context.Context, reason, source string) error {
 	current := int(w.pct.Load())
 	next, done := nextPercentage(current)
 
 	if done {
+		w.pct.Store(0)
 		log.Printf("writer: COMPLETE — rollout fully ramped at %d%%", current)
+		w.emit("complete", map[string]any{"reason": "fully ramped at 100%", "source": source})
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
 			return err
 		}
@@ -177,6 +194,7 @@ func (w *Writer) advance(ctx context.Context, reason string) error {
 
 	w.pct.Store(int32(next))
 	log.Printf("writer: ADVANCE %d%% → %d%% — %s", current, next, reason)
+	w.emit("advance", map[string]any{"from": current, "to": next, "reason": reason, "source": source})
 
 	if err := w.repo.UpdatePercentage(ctx, w.rolloutID, next); err != nil {
 		return err

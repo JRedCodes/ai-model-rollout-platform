@@ -3,11 +3,19 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/JRedCodes/rollout-controller/internal/config"
 )
+
+type Decision struct {
+	Action    string    `json:"action"`
+	Reason    string    `json:"reason"`
+	Source    string    `json:"source"`
+	DecidedAt time.Time `json:"decidedAt"`
+}
 
 type RolloutRepository struct {
 	pool *pgxpool.Pool
@@ -96,4 +104,29 @@ func (r *RolloutRepository) InsertDecision(ctx context.Context, id, rolloutID, a
 		VALUES ($1, $2, $3, $4, $5)
 	`, id, rolloutID, action, reason, source)
 	return err
+}
+
+// ListDecisions returns the most recent decisions for a rollout, newest first.
+func (r *RolloutRepository) ListDecisions(ctx context.Context, rolloutID string, limit int) ([]Decision, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT action, reason, source, decided_at
+		FROM rollout_decisions
+		WHERE rollout_id = $1
+		ORDER BY decided_at DESC
+		LIMIT $2
+	`, rolloutID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list decisions: %w", err)
+	}
+	defer rows.Close()
+
+	var decisions []Decision
+	for rows.Next() {
+		var d Decision
+		if err := rows.Scan(&d.Action, &d.Reason, &d.Source, &d.DecidedAt); err != nil {
+			return nil, fmt.Errorf("scan decision: %w", err)
+		}
+		decisions = append(decisions, d)
+	}
+	return decisions, rows.Err()
 }

@@ -59,9 +59,12 @@ func main() {
 	store := metrics.NewStore()
 	bl := batchlogger.New(pool, 10*time.Second)
 
+	hub := api.NewSSEHub()
+
 	w := writer.New(
 		rdb,
 		repo,
+		hub.Broadcast,
 		rolloutCfg.FeatureFlagKey,
 		rolloutCfg.RolloutID,
 		rolloutCfg.RolloutPhaseID,
@@ -88,7 +91,7 @@ func main() {
 
 	g := guard.New(policy, store, w.Commands)
 	ctrl := controller.New(policy, store, w)
-	srv := api.New(4003, rolloutCfg, store, w)
+	srv := api.New(4003, rolloutCfg, store, w, repo, hub)
 
 	var wg sync.WaitGroup
 	wg.Add(6)

@@ -1,6 +1,6 @@
 # AI Model Rollout Platform
 
-A distributed backend platform for safely deploying new AI model versions through progressive traffic rollouts. The system shifts traffic incrementally from a stable model to a candidate model, publishes telemetry after every inference, and makes autonomous decisions to advance, hold, or roll back a rollout based on live error rates and latency.
+A distributed backend platform for safely deploying new AI model versions through progressive traffic rollouts. The system shifts traffic incrementally from a stable model to a candidate model, publishes telemetry after every inference, and makes autonomous decisions to advance, hold, resume, or roll back a rollout based on live error rates and latency.
 
 Built as an incremental engineering project — each subsystem developed and verified in isolation before integrating into the whole.
 
@@ -77,7 +77,7 @@ Real-time control panel for monitoring and operating a live rollout.
 
 - **Status panel** — rollout ID, RUNNING/HELD badge, stable and candidate model versions, current candidate traffic percentage, 5-step advancement ladder
 - **Metrics panel** — 2-minute window error rate (color-coded against advance/hold/rollback thresholds), P95 latency, window request count, total lifetime requests
-- **Decision feed** — last 50 decisions from Postgres with ADVANCE/HOLD/ROLLBACK/COMPLETE badges, reason, source, and timestamp
+- **Decision feed** — last 50 decisions from Postgres with ADVANCE/HOLD/RESUME/ROLLBACK/COMPLETE badges, reason, source, and timestamp
 - **Model configuration panel** — edit failure rate and latency range per model version; saves via `PUT /api/models/:id`, takes effect on the next inference request
 - **Force rollback** — immediately clears candidate traffic, bypassing the guard and controller
 - **Live updates via SSE** — the controller pushes an event on every state transition; the dashboard invalidates and refetches within milliseconds, no polling lag
@@ -125,7 +125,7 @@ Single binary with six goroutines:
 | `ingestion` | continuous | Consumes Redis Stream via consumer group, writes to metrics store + batch logger buffer |
 | `batchlogger` | 10s | Bulk-flushes inference events to `inference_events` via `COPY` |
 | `guard` | 5s | Early rollback detection — fresh window (last 50 reqs) and absolute window |
-| `controller` | 2 min | Evaluates error rate + P95 latency; advances or holds the rollout |
+| `controller` | 2 min | Evaluates error rate + P95 latency; advances, holds, or resumes the rollout |
 | `writer` | event-driven + 60s heartbeat | Sole owner of Redis and Postgres writes; re-seeds the Redis feature flag every 60s; broadcasts SSE events to connected dashboard clients |
 | `api` | — | HTTP read/write API, SSE hub, manual rollback |
 
@@ -292,7 +292,7 @@ curl -X POST http://localhost:4002/v1/infer \
 | `GET` | `/models` | List model configurations (failure rate, latency range) |
 | `GET` | `/models/{id}` | Get a single model's configuration |
 | `PUT` | `/models/{id}` | Update a model's failure rate and latency range — persists to Postgres, publishes to Redis, broadcasts an SSE event |
-| `GET` | `/events` | SSE stream — pushes `advance`, `hold`, `rollback`, `complete` events to connected clients |
+| `GET` | `/events` | SSE stream — pushes `advance`, `hold`, `resume`, `rollback`, `complete` events to connected clients |
 
 ---
 
@@ -318,11 +318,13 @@ The controller advances one step per successful 2-minute evaluation window.
 | Error rate | > 2% | Hold |
 | P95 latency | > 250ms | Hold |
 
-**Guard always wins.** When the guard issues a rollback and the controller would advance, the hold flag blocks the advance. Only a manual rollback clears a guard-triggered hold.
+**Guard always wins.** When the guard issues a rollback, the held flag blocks any advance. Only `POST /rollout/rollback` (or a new rollout row) recovers from a rollback.
 
-### Holds require manual intervention
+### HOLD recovers automatically; ROLLBACK doesn't
 
-A hold does not automatically clear when metrics recover. A held rollout can only be unstuck via `POST /rollout/rollback` (which rolls back to the stable model). Restarting from a good baseline requires a new rollout row.
+A `HOLD` isn't sticky — the controller keeps evaluating metrics through it instead of freezing. If a full 2-minute window comes back clean (error rate ≤ 2%, P95 ≤ 250ms), it fires `RESUME`: the hold clears and the rollout returns to `RUNNING` at its *current* percentage, without also advancing in that same cycle. A second consecutive clean window is what actually advances to the next step — one window proves it's safe again, a second earns the next step. This applies whether the guard or the controller raised the hold. The guard's 5s checks keep running independently throughout, so a resume that turns out to be premature gets caught and re-held within seconds rather than sitting on a false "recovered" status for a full 2-minute cycle.
+
+`ROLLBACK` is different and stays fully manual: once `ROLLED_BACK`, fixing the underlying cause does not bring a rollout back on its own. Recovery requires a new rollout row — a rollback is treated as a hard stop that deserves a human decision, not something metrics alone should walk back.
 
 ---
 
@@ -362,7 +364,7 @@ Stores the rollout configuration and current lifecycle status. Policy fields (th
 One row per inference, written by the batch logger in 10-second bulk flushes. Indexed on `(rollout_id, occurred_at)` for the time-window queries the guard and controller issue.
 
 ### `rollout_decisions`
-Append-only audit log of every decision the guard, controller, or manual API makes. Fields: `action` (HOLD / ROLLBACK / ADVANCE / COMPLETE), `reason`, `source` (guard / controller / manual), `decided_at`.
+Append-only audit log of every decision the guard, controller, or manual API makes. Fields: `action` (HOLD / RESUME / ROLLBACK / ADVANCE / COMPLETE), `reason`, `source` (guard / controller / manual), `decided_at`.
 
 ### `model_configurations`
 Per-model-version simulation params (`failure_rate`, `min_latency_ms`, `max_latency_ms`), edited via the Rollout Controller's `/models/{id}` API. Published to Redis on every write so Model Service picks up changes without a restart.

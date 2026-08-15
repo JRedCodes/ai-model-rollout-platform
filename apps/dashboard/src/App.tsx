@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { MetricsPanel } from "./MetricsPanel.tsx";
 import { DecisionFeed } from "./DecisionFeed.tsx";
+import { ModelConfigPanel } from "./ModelConfigPanel.tsx";
 import { useSSE } from "./useSSE.ts";
 
 const queryClient = new QueryClient({
@@ -27,6 +28,7 @@ function Dashboard() {
       <main className="max-w-5xl mx-auto p-6 space-y-4">
         <StatusPanel />
         <MetricsPanel />
+        <ModelConfigPanel />
         <DecisionFeed />
       </main>
     </div>

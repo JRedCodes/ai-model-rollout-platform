@@ -11,6 +11,7 @@ export function useSSE() {
       void queryClient.invalidateQueries({ queryKey: ["rollout"] });
       void queryClient.invalidateQueries({ queryKey: ["metrics"] });
       void queryClient.invalidateQueries({ queryKey: ["decisions"] });
+      void queryClient.invalidateQueries({ queryKey: ["modelConfigs"] });
     };
 
     es.onerror = () => {

@@ -9,41 +9,39 @@ Built as an incremental engineering project — each subsystem developed and ver
 ## Architecture
 
 ```
-  ┌─────────────────┐       ┌─────────────────┐
-  │  Stress Tester  │       │    Dashboard    │  :5173
-  └────────┬────────┘       └────────┬────────┘
-           │ POST /v1/infer          │ GET /api/rollout
-           │                         │ GET /api/events (SSE)
-           │                         │ PUT /api/models/:id
-           ▼                         ▼
-  ┌─────────────────┐       ┌──────────────────────┐
-  │  Edge Evaluator │  :4002│  Rollout Controller  │  :4003
-  │  (TypeScript)   │       │  (Go)                │
-  └──┬──────────┬───┘       │                      │
-     │          │           │  ┌────────────────┐  │
-fetch│          │ xAdd      │  │ ingestion      │  │
-     │          ▼           │  │ batchlogger    │  │
-     │   ┌──────────────────┐  │  │ guard (5s)     │  │
-     │   │  Redis Streams   │  │  │ controller(2m) │  │
-     │   │  telemetry:infer │  │  │ writer         │  │
-     │   └──────────┬───────┘  │  │ api server     │  │
-     │              │ XReadGroup│  └───────┬────────┘  │
-     ▼              ▼           └──────────┼───────────┘
-┌──────────────┐                          │
-│ Model Service│            ┌─────────────┴──────────────┐
-│ (TypeScript) │            │                            │
-│  :4001       │            ▼                            ▼
-└──────────────┘     ┌─────────────┐             ┌──────────────┐
-                     │    Redis    │             │  PostgreSQL  │
-                     │ feature flag│             │  rollouts    │
-                     │ (read by    │             │  inference_  │
-                     │  edge eval) │             │  events      │
-                     └─────────────┘             │  rollout_    │
-                                                 │  decisions   │
-                                                 └──────────────┘
+        ┌───────────────┐                         ┌───────────┐
+        │ Stress Tester │                         │ Dashboard │ :5173
+        └───────────────┘                         └───────────┘
+                │ POST /v1/infer                        │ GET /api/rollout
+                │                                       │ GET /api/models
+                │                                       │ PUT /api/models/:id
+                │                                       │ GET /api/events (SSE)
+                │                                       │
+                ▼                                       ▼
+        ┌────────────────┐                        ┌────────────────────┐
+        │ Edge Evaluator │ :4002                  │ Rollout Controller │ :4003
+        │ (TypeScript)   │                        │ (Go)               │
+        └──┬──────────┬──┘                        │                    │
+     fetch │          │ xAdd                      │ ingestion          │
+           │          ▼                           │ batchlogger        │
+           │        ┌─────────────────┐ XReadGroup│ guard (5s)         │
+           │        │ Redis Streams   │──────────►│ controller (2m)    │
+           │        │ telemetry:infer │           │ writer             │
+           │        └─────────────────┘           │ api server         │
+           │                                      └────────────────────┘
+           ▼                                                 │
+        ┌───────────────┐ reads model-config          ┌──────┴──────────────────────┐
+        │ Model Service │──────────────►              ▼                             ▼
+        │ (TypeScript)  │               ┌───────────────────────────┐   ┌──────────────────────┐
+        │ :4001         │               │ Redis                     │   │ PostgreSQL           │
+        └───────────────┘               │ feature flag  (edge eval) │   │ rollouts             │
+                                        │ model config  (model svc) │   │ inference_events     │
+                                        └───────────────────────────┘   │ rollout_decisions    │
+                                                                        │ model_configurations │
+                                                                        └──────────────────────┘
 ```
 
-**Request flow:** Every inference request hits the Edge Evaluator, which reads the active feature flag from Redis, deterministically assigns the user to stable or candidate model traffic, forwards to the Model Service, and publishes an `InferenceCompletedEvent` to a Redis Stream.
+**Request flow:** Every inference request hits the Edge Evaluator, which reads the active feature flag from Redis, deterministically assigns the user to stable or candidate model traffic, and forwards to the Model Service. The Model Service reads that model version's simulation config (failure rate, latency range) from Redis before responding, then the Edge Evaluator publishes an `InferenceCompletedEvent` to a Redis Stream.
 
 **Control flow:** The Rollout Controller consumes the stream, evaluates metrics every 5 seconds (guard) and every 2 minutes (controller), and writes decisions back to both Postgres and Redis.
 

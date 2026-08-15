@@ -17,6 +17,7 @@ import (
 	"github.com/JRedCodes/rollout-controller/internal/guard"
 	"github.com/JRedCodes/rollout-controller/internal/ingestion"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
+	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
 	redisc "github.com/JRedCodes/rollout-controller/internal/redis"
 	"github.com/JRedCodes/rollout-controller/internal/writer"
 )
@@ -91,10 +92,20 @@ func main() {
 
 	g := guard.New(policy, store, w.Commands)
 	ctrl := controller.New(policy, store, w)
-	srv := api.New(4003, rolloutCfg, store, w, repo, hub)
+
+	modelConfigRepo := modelconfig.NewRepository(pool)
+	modelConfigSeeder := modelconfig.NewSeeder(rdb, modelConfigRepo)
+
+	// Seed Redis immediately so Model Service has valid configs on first request.
+	if err := modelConfigSeeder.SeedAll(ctx); err != nil {
+		log.Fatalf("failed to seed model configs: %v", err)
+	}
+	log.Printf("redis model configs seeded")
+
+	srv := api.New(4003, rolloutCfg, store, w, repo, hub, modelConfigRepo, modelConfigSeeder)
 
 	var wg sync.WaitGroup
-	wg.Add(6)
+	wg.Add(7)
 
 	go func() { defer wg.Done(); w.Run(ctx) }()
 	go func() { defer wg.Done(); bl.Run(ctx) }()
@@ -102,6 +113,7 @@ func main() {
 	go func() { defer wg.Done(); g.Run(ctx) }()
 	go func() { defer wg.Done(); ctrl.Run(ctx) }()
 	go func() { defer wg.Done(); srv.Run(ctx) }()
+	go func() { defer wg.Done(); modelConfigSeeder.Run(ctx) }()
 
 	log.Printf("rollout controller started — rollout %s, stream %s, api :4003",
 		rolloutCfg.RolloutID, rolloutCfg.StreamKey)

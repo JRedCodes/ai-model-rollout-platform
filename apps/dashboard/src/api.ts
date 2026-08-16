@@ -1,4 +1,34 @@
+import { getApiKey, clearApiKey } from "./apiKey.ts";
+
 const BASE = "/api";
+
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("Unauthorized — API key missing or invalid");
+    this.name = "UnauthorizedError";
+  }
+}
+
+// Wraps fetch: attaches the stored tenant API key, and on a 401 clears it
+// (so the App root falls back to the key-entry gate) and throws a typed
+// error instead of letting callers see an opaque failed response.
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const apiKey = getApiKey();
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      ...init.headers,
+    },
+  });
+
+  if (res.status === 401) {
+    clearApiKey();
+    throw new UnauthorizedError();
+  }
+
+  return res;
+}
 
 export type RolloutState =
   | { active: false }
@@ -61,30 +91,30 @@ export interface ModelConfigUpdate {
 }
 
 export async function fetchRollout(): Promise<RolloutState> {
-  const res = await fetch(`${BASE}/rollout`);
+  const res = await apiFetch(`/rollout`);
   if (!res.ok) throw new Error(`GET /rollout: ${res.status}`);
   return res.json() as Promise<RolloutState>;
 }
 
 export async function fetchMetrics(): Promise<RolloutMetrics> {
-  const res = await fetch(`${BASE}/rollout/metrics`);
+  const res = await apiFetch(`/rollout/metrics`);
   if (!res.ok) throw new Error(`GET /rollout/metrics: ${res.status}`);
   return res.json() as Promise<RolloutMetrics>;
 }
 
 export async function fetchDecisions(): Promise<Decision[]> {
-  const res = await fetch(`${BASE}/rollout/decisions`);
+  const res = await apiFetch(`/rollout/decisions`);
   if (!res.ok) throw new Error(`GET /rollout/decisions: ${res.status}`);
   return res.json() as Promise<Decision[]>;
 }
 
 export async function postRollback(): Promise<void> {
-  const res = await fetch(`${BASE}/rollout/rollback`, { method: "POST" });
+  const res = await apiFetch(`/rollout/rollback`, { method: "POST" });
   if (!res.ok) throw new Error(`POST /rollout/rollback: ${res.status}`);
 }
 
 export async function createRollout(input: CreateRolloutInput): Promise<Rollout> {
-  const res = await fetch(`${BASE}/rollouts`, {
+  const res = await apiFetch(`/rollouts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -97,7 +127,7 @@ export async function createRollout(input: CreateRolloutInput): Promise<Rollout>
 }
 
 export async function fetchModelConfigs(): Promise<ModelConfig[]> {
-  const res = await fetch(`${BASE}/models`);
+  const res = await apiFetch(`/models`);
   if (!res.ok) throw new Error(`GET /models: ${res.status}`);
   return res.json() as Promise<ModelConfig[]>;
 }
@@ -106,7 +136,7 @@ export async function updateModelConfig(
   modelVersionId: string,
   update: ModelConfigUpdate,
 ): Promise<ModelConfig> {
-  const res = await fetch(`${BASE}/models/${modelVersionId}`, {
+  const res = await apiFetch(`/models/${modelVersionId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(update),

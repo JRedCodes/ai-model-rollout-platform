@@ -27,7 +27,10 @@ export class Monitor {
   private statsInterval: ReturnType<typeof setInterval> | null = null;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly runner: Runner) {}
+  constructor(
+    private readonly runner: Runner,
+    private readonly apiKey: string,
+  ) {}
 
   start(): void {
     this.startMs = Date.now();
@@ -84,6 +87,7 @@ export class Monitor {
   private async pollState(): Promise<void> {
     try {
       const resp = await fetch(`${CONTROLLER_URL}/rollout`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
         signal: AbortSignal.timeout(2000),
       });
       if (!resp.ok) return;

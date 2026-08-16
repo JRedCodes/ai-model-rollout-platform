@@ -11,6 +11,7 @@ import { redisClient } from "../redis/redis.client.js";
 export function publishInferenceEvent(
   requestId: string,
   userId: string,
+  tenantId: string,
   featureFlag: FeatureFlag | null,
   selectedModelVersionId: string,
   modelResponse: ModelInferenceResponse,
@@ -20,6 +21,7 @@ export function publishInferenceEvent(
     eventId: randomUUID(),
     requestId,
     userId,
+    tenantId,
     rolloutId: featureFlag?.rolloutId ?? null,
     rolloutPhaseId: featureFlag?.rolloutPhaseId ?? null,
     modelVersionId: modelResponse.modelVersionId,

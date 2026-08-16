@@ -23,6 +23,7 @@ export class Runner {
   constructor(
     private readonly rps: number,
     private readonly durationSecs: number,
+    private readonly apiKey: string,
   ) {}
 
   async run(): Promise<RunStats> {
@@ -46,7 +47,7 @@ export class Runner {
         const userId = USER_IDS[Math.floor(Math.random() * USER_IDS.length)]!;
         const start = Date.now();
 
-        sendRequest(userId)
+        sendRequest(userId, this.apiKey)
           .then((success) => {
             const latencyMs = Date.now() - start;
             this.stats.totalRequests++;
@@ -74,10 +75,13 @@ export class Runner {
   }
 }
 
-async function sendRequest(userId: string): Promise<boolean> {
+async function sendRequest(userId: string, apiKey: string): Promise<boolean> {
   const resp = await fetch(`${EDGE_URL}/v1/infer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
     body: JSON.stringify({
       requestId: randomUUID(),
       userId,

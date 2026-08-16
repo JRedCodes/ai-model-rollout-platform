@@ -29,8 +29,12 @@ inferenceRouter.post("/infer", async (request, response) => {
     return;
   }
 
+  // Guaranteed set by requireTenantAuth, which runs before this router and
+  // rejects the request before it gets here otherwise.
+  const tenantId = request.tenantId as string;
+
   try {
-    const featureFlag = await getActiveFeatureFlag();
+    const featureFlag = await getActiveFeatureFlag(tenantId);
 
     const selectedModelVersionId = selectModel(
       parsedRequest.data.userId,
@@ -41,6 +45,7 @@ inferenceRouter.post("/infer", async (request, response) => {
       selectedModelVersionId,
       {
         requestId: parsedRequest.data.requestId,
+        tenantId,
         input: parsedRequest.data.input,
       },
     );
@@ -48,6 +53,7 @@ inferenceRouter.post("/infer", async (request, response) => {
     publishInferenceEvent(
       parsedRequest.data.requestId,
       parsedRequest.data.userId,
+      tenantId,
       featureFlag,
       selectedModelVersionId,
       modelResponse,
@@ -75,6 +81,7 @@ inferenceRouter.post("/infer", async (request, response) => {
           env.STABLE_MODEL_FALLBACK_ID,
           {
             requestId: parsedRequest.data.requestId,
+            tenantId,
             input: parsedRequest.data.input,
           },
         );
@@ -82,6 +89,7 @@ inferenceRouter.post("/infer", async (request, response) => {
         publishInferenceEvent(
           parsedRequest.data.requestId,
           parsedRequest.data.userId,
+          tenantId,
           null,
           env.STABLE_MODEL_FALLBACK_ID,
           modelResponse,

@@ -12,8 +12,11 @@ import (
 
 const redisKeyPrefix = "model-config:"
 
-func redisKey(modelVersionID string) string {
-	return redisKeyPrefix + modelVersionID
+// redisKey is tenant-scoped: two tenants can each have their own "model-v1"
+// with different simulated behavior, so the model version ID alone isn't a
+// unique cache key.
+func redisKey(tenantID, modelVersionID string) string {
+	return redisKeyPrefix + tenantID + ":" + modelVersionID
 }
 
 type redisPayload struct {
@@ -37,9 +40,9 @@ func NewSeeder(rdb *redis.Client, repo *Repository) *Seeder {
 	return &Seeder{rdb: rdb, repo: repo}
 }
 
-// SeedAll writes every model configuration in Postgres to Redis.
+// SeedAll writes every tenant's model configurations in Postgres to Redis.
 func (s *Seeder) SeedAll(ctx context.Context) error {
-	profiles, err := s.repo.List(ctx)
+	profiles, err := s.repo.ListAll(ctx)
 	if err != nil {
 		return fmt.Errorf("seed model configs: %w", err)
 	}
@@ -51,7 +54,7 @@ func (s *Seeder) SeedAll(ctx context.Context) error {
 	return nil
 }
 
-// Publish writes a single model configuration to Redis.
+// Publish writes a single model configuration to Redis, scoped to p.TenantID.
 func (s *Seeder) Publish(ctx context.Context, p Profile) error {
 	payload := redisPayload{
 		ModelVersionID: p.ModelVersionID,
@@ -66,7 +69,7 @@ func (s *Seeder) Publish(ctx context.Context, p Profile) error {
 		return fmt.Errorf("marshal model config: %w", err)
 	}
 
-	if err := s.rdb.Set(ctx, redisKey(p.ModelVersionID), data, 0).Err(); err != nil {
+	if err := s.rdb.Set(ctx, redisKey(p.TenantID, p.ModelVersionID), data, 0).Err(); err != nil {
 		return fmt.Errorf("write model config to redis: %w", err)
 	}
 	return nil

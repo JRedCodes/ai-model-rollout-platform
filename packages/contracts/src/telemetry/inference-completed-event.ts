@@ -6,6 +6,7 @@ export const inferenceCompletedEventSchema = z.object({
 
   requestId: z.string().min(1),
   userId: z.string().min(1),
+  tenantId: z.string().min(1),
 
   rolloutId: z.string().min(1).nullable(),
   rolloutPhaseId: z.string().min(1).nullable(),

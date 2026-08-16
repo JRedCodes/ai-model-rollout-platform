@@ -60,6 +60,9 @@ export async function getFeatureFlag(
   return parsedFlag.data;
 }
 
-export function getActiveFeatureFlag(): Promise<FeatureFlag> {
-  return getFeatureFlag(env.FEATURE_FLAG_KEY);
+// Each tenant publishes its feature flag under its own key -- there's no
+// single fixed flag to read anymore, so the caller's authenticated tenant
+// ID is required.
+export function getActiveFeatureFlag(tenantId: string): Promise<FeatureFlag> {
+  return getFeatureFlag(`${env.FEATURE_FLAG_KEY_PREFIX}${tenantId}`);
 }

@@ -6,9 +6,9 @@ export const env = {
   MODEL_SERVICE_URL: process.env.MODEL_SERVICE_URL ?? "http://localhost:4001",
   REDIS_URL:
     process.env.REDIS_URL ?? "redis://localhost:6379",
-  FEATURE_FLAG_KEY:
-    process.env.FEATURE_FLAG_KEY ??
-    "feature-flag:model-routing:development",
+  FEATURE_FLAG_KEY_PREFIX:
+    process.env.FEATURE_FLAG_KEY_PREFIX ??
+    "feature-flag:model-routing:",
   TELEMETRY_STREAM_KEY:
     process.env.TELEMETRY_STREAM_KEY ??
     "telemetry:inference-completed",

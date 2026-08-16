@@ -34,6 +34,7 @@ func main() {
 	redisURL := envOr("REDIS_URL", "redis://localhost:6379")
 	pgURL := envOr("DATABASE_URL", "postgres://jakeredding@localhost:5432/rollout_platform")
 	migrationsPath := envOr("MIGRATIONS_PATH", "./migrations")
+	featureFlagKey := envOr("FEATURE_FLAG_KEY", "feature-flag:model-routing:development")
 
 	// golang-migrate's pgx/v5 driver uses the "pgx5" scheme.
 	migrateURL := "pgx5://" + strings.TrimPrefix(pgURL, "postgres://")
@@ -72,7 +73,7 @@ func main() {
 	}
 	log.Printf("redis model configs seeded")
 
-	srv := api.New(4003, pipeline, repo, hub, modelConfigRepo, modelConfigSeeder)
+	srv := api.New(4003, pipeline, repo, hub, modelConfigRepo, modelConfigSeeder, featureFlagKey)
 
 	// These three run for the life of the process, independent of which
 	// rollout (if any) is currently active.

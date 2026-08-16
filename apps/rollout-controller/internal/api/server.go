@@ -21,6 +21,7 @@ type Server struct {
 	hub             *SSEHub
 	modelConfigRepo *modelconfig.Repository
 	modelConfigPub  *modelconfig.Seeder
+	featureFlagKey  string
 	httpServer      *http.Server
 }
 
@@ -31,6 +32,7 @@ func New(
 	hub *SSEHub,
 	modelConfigRepo *modelconfig.Repository,
 	modelConfigPub *modelconfig.Seeder,
+	featureFlagKey string,
 ) *Server {
 	s := &Server{
 		pipeline:        pipeline,
@@ -38,6 +40,7 @@ func New(
 		hub:             hub,
 		modelConfigRepo: modelConfigRepo,
 		modelConfigPub:  modelConfigPub,
+		featureFlagKey:  featureFlagKey,
 	}
 
 	mux := http.NewServeMux()
@@ -46,6 +49,9 @@ func New(
 	mux.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
 	mux.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)
 	mux.HandleFunc("POST /rollout/rollback", s.handleRollback)
+	mux.HandleFunc("GET /rollouts", s.handleListRollouts)
+	mux.HandleFunc("GET /rollouts/{id}", s.handleGetRolloutByID)
+	mux.HandleFunc("POST /rollouts", s.handleCreateRollout)
 	mux.HandleFunc("GET /models", s.handleListModels)
 	mux.HandleFunc("GET /models/{id}", s.handleGetModel)
 	mux.HandleFunc("PUT /models/{id}", s.handleUpdateModel)
@@ -230,6 +236,119 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		Source: "manual",
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "rollback initiated"})
+}
+
+func (s *Server) handleListRollouts(w http.ResponseWriter, r *http.Request) {
+	rollouts, err := s.repo.ListRollouts(r.Context())
+	if err != nil {
+		log.Printf("api: list rollouts: %v", err)
+		http.Error(w, "failed to load rollouts", http.StatusInternalServerError)
+		return
+	}
+	if rollouts == nil {
+		rollouts = []db.Rollout{}
+	}
+	writeJSON(w, http.StatusOK, rollouts)
+}
+
+func (s *Server) handleGetRolloutByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	rollout, err := s.repo.GetRollout(r.Context(), id)
+	if err != nil {
+		if notFound, ok := errors.AsType[*db.RolloutNotFoundError](err); ok {
+			http.Error(w, notFound.Error(), http.StatusNotFound)
+			return
+		}
+		log.Printf("api: get rollout: %v", err)
+		http.Error(w, "failed to load rollout", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, rollout)
+}
+
+type createRolloutRequest struct {
+	RolloutPhaseID          string  `json:"rolloutPhaseId"`
+	StableModelVersionID    *string `json:"stableModelVersionId"`
+	CandidateModelVersionID string  `json:"candidateModelVersionId"`
+	CandidatePercentage     *int    `json:"candidatePercentage"`
+}
+
+// handleCreateRollout creates a new rollout, replacing the old manual psql
+// INSERT workflow. If stableModelVersionId is omitted, it defaults to the
+// most recently COMPLETED rollout's candidate — the "promote candidate to
+// stable, prepare next rollout slot" behavior.
+func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
+	var body createRolloutRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.RolloutPhaseID == "" {
+		http.Error(w, "rolloutPhaseId is required", http.StatusBadRequest)
+		return
+	}
+	if body.CandidateModelVersionID == "" {
+		http.Error(w, "candidateModelVersionId is required", http.StatusBadRequest)
+		return
+	}
+
+	percentage := 10
+	if body.CandidatePercentage != nil {
+		if *body.CandidatePercentage < 0 || *body.CandidatePercentage > 100 {
+			http.Error(w, "candidatePercentage must be between 0 and 100", http.StatusBadRequest)
+			return
+		}
+		percentage = *body.CandidatePercentage
+	}
+
+	if _, err := s.modelConfigRepo.Get(r.Context(), body.CandidateModelVersionID); err != nil {
+		s.writeModelConfigError(w, err)
+		return
+	}
+
+	stableID := ""
+	if body.StableModelVersionID != nil && *body.StableModelVersionID != "" {
+		stableID = *body.StableModelVersionID
+	} else {
+		promoted, err := s.repo.LatestCompletedCandidate(r.Context())
+		if err != nil {
+			if errors.Is(err, db.ErrNoCompletedRollout) {
+				http.Error(w, "stableModelVersionId is required (no completed rollout to default it from)", http.StatusBadRequest)
+				return
+			}
+			log.Printf("api: latest completed candidate: %v", err)
+			http.Error(w, "failed to resolve stable model version", http.StatusInternalServerError)
+			return
+		}
+		stableID = promoted
+	}
+
+	if _, err := s.modelConfigRepo.Get(r.Context(), stableID); err != nil {
+		s.writeModelConfigError(w, err)
+		return
+	}
+
+	rollout, err := s.repo.CreateRollout(r.Context(), db.CreateRolloutInput{
+		RolloutPhaseID:          body.RolloutPhaseID,
+		StableModelVersionID:    stableID,
+		CandidateModelVersionID: body.CandidateModelVersionID,
+		CandidatePercentage:     percentage,
+		FeatureFlagKey:          s.featureFlagKey,
+	})
+	if err != nil {
+		if errors.Is(err, db.ErrActiveRolloutExists) {
+			http.Error(w, "an active rollout already exists", http.StatusConflict)
+			return
+		}
+		log.Printf("api: create rollout: %v", err)
+		http.Error(w, "failed to create rollout", http.StatusInternalServerError)
+		return
+	}
+
+	s.hub.Broadcast("rollout-created", rollout)
+	writeJSON(w, http.StatusCreated, rollout)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

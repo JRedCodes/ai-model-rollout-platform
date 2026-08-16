@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/JRedCodes/rollout-controller/internal/db"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
 	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
+	"github.com/JRedCodes/rollout-controller/internal/tenant"
 	"github.com/JRedCodes/rollout-controller/internal/writer"
 )
 
@@ -21,6 +23,9 @@ type Server struct {
 	hub             *SSEHub
 	modelConfigRepo *modelconfig.Repository
 	modelConfigPub  *modelconfig.Seeder
+	tenantRepo      *tenant.Repository
+	tenantPub       *tenant.Seeder
+	adminAPIKey     string
 	featureFlagKey  string
 	httpServer      *http.Server
 }
@@ -32,6 +37,9 @@ func New(
 	hub *SSEHub,
 	modelConfigRepo *modelconfig.Repository,
 	modelConfigPub *modelconfig.Seeder,
+	tenantRepo *tenant.Repository,
+	tenantPub *tenant.Seeder,
+	adminAPIKey string,
 	featureFlagKey string,
 ) *Server {
 	s := &Server{
@@ -40,11 +48,15 @@ func New(
 		hub:             hub,
 		modelConfigRepo: modelConfigRepo,
 		modelConfigPub:  modelConfigPub,
+		tenantRepo:      tenantRepo,
+		tenantPub:       tenantPub,
+		adminAPIKey:     adminAPIKey,
 		featureFlagKey:  featureFlagKey,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("POST /tenants", s.handleCreateTenant)
 	mux.HandleFunc("GET /rollout", s.handleGetRollout)
 	mux.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
 	mux.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)
@@ -84,6 +96,52 @@ func (s *Server) Run(ctx context.Context) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type createTenantRequest struct {
+	Name string `json:"name"`
+}
+
+// handleCreateTenant is the one bootstrapping endpoint gated by a single
+// shared ADMIN_API_KEY rather than a per-tenant key -- there's no tenant
+// key to present yet, since this is what issues the first one. Every other
+// route is gated by the per-tenant auth middleware added in the next
+// commit.
+func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
+	presented := r.Header.Get("X-Admin-Key")
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(s.adminAPIKey)) != 1 {
+		http.Error(w, "invalid admin key", http.StatusUnauthorized)
+		return
+	}
+
+	var body createTenantRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	t, plaintextKey, err := s.tenantRepo.Create(r.Context(), body.Name)
+	if err != nil {
+		log.Printf("api: create tenant: %v", err)
+		http.Error(w, "failed to create tenant", http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.tenantPub.Publish(r.Context(), t.ID, plaintextKey); err != nil {
+		log.Printf("api: failed to publish tenant auth to redis: %v", err)
+		http.Error(w, "created but failed to propagate auth to redis", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":     t.ID,
+		"name":   t.Name,
+		"apiKey": plaintextKey,
+	})
 }
 
 func (s *Server) handleGetRollout(w http.ResponseWriter, r *http.Request) {

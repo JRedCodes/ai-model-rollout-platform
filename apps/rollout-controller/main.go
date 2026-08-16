@@ -23,6 +23,7 @@ import (
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
 	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
 	redisc "github.com/JRedCodes/rollout-controller/internal/redis"
+	"github.com/JRedCodes/rollout-controller/internal/tenant"
 	"github.com/JRedCodes/rollout-controller/internal/writer"
 )
 
@@ -35,6 +36,7 @@ func main() {
 	pgURL := envOr("DATABASE_URL", "postgres://jakeredding@localhost:5432/rollout_platform")
 	migrationsPath := envOr("MIGRATIONS_PATH", "./migrations")
 	featureFlagKey := envOr("FEATURE_FLAG_KEY", "feature-flag:model-routing:development")
+	adminAPIKey := envOr("ADMIN_API_KEY", "dev-admin-key")
 
 	// golang-migrate's pgx/v5 driver uses the "pgx5" scheme.
 	migrateURL := "pgx5://" + strings.TrimPrefix(pgURL, "postgres://")
@@ -73,15 +75,26 @@ func main() {
 	}
 	log.Printf("redis model configs seeded")
 
-	srv := api.New(4003, pipeline, repo, hub, modelConfigRepo, modelConfigSeeder, featureFlagKey)
+	tenantRepo := tenant.NewRepository(pool)
+	tenantSeeder := tenant.NewSeeder(rdb, tenantRepo)
 
-	// These three run for the life of the process, independent of which
+	// Seed Redis immediately so the Edge Evaluator can authenticate requests
+	// against every existing tenant on first request.
+	if err := tenantSeeder.SeedAll(ctx); err != nil {
+		log.Fatalf("failed to seed tenant auth: %v", err)
+	}
+	log.Printf("redis tenant auth seeded")
+
+	srv := api.New(4003, pipeline, repo, hub, modelConfigRepo, modelConfigSeeder, tenantRepo, tenantSeeder, adminAPIKey, featureFlagKey)
+
+	// These four run for the life of the process, independent of which
 	// rollout (if any) is currently active.
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() { defer wg.Done(); srv.Run(ctx) }()
 	go func() { defer wg.Done(); bl.Run(ctx) }()
 	go func() { defer wg.Done(); modelConfigSeeder.Run(ctx) }()
+	go func() { defer wg.Done(); tenantSeeder.Run(ctx) }()
 
 	log.Printf("rollout controller started — api :4003")
 

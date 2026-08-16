@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/JRedCodes/rollout-controller/internal/config"
 	"github.com/JRedCodes/rollout-controller/internal/db"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
 	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
@@ -17,9 +16,7 @@ import (
 )
 
 type Server struct {
-	rolloutCfg      config.RolloutConfig
-	store           *metrics.Store
-	w               *writer.Writer
+	pipeline        *PipelineHolder
 	repo            *db.RolloutRepository
 	hub             *SSEHub
 	modelConfigRepo *modelconfig.Repository
@@ -29,18 +26,14 @@ type Server struct {
 
 func New(
 	port int,
-	rolloutCfg config.RolloutConfig,
-	store *metrics.Store,
-	w *writer.Writer,
+	pipeline *PipelineHolder,
 	repo *db.RolloutRepository,
 	hub *SSEHub,
 	modelConfigRepo *modelconfig.Repository,
 	modelConfigPub *modelconfig.Seeder,
 ) *Server {
 	s := &Server{
-		rolloutCfg:      rolloutCfg,
-		store:           store,
-		w:               w,
+		pipeline:        pipeline,
 		repo:            repo,
 		hub:             hub,
 		modelConfigRepo: modelConfigRepo,
@@ -88,22 +81,35 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetRollout(w http.ResponseWriter, r *http.Request) {
+	p := s.pipeline.Load()
+	if p == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"rolloutId":               s.rolloutCfg.RolloutID,
-		"rolloutPhaseId":          s.rolloutCfg.RolloutPhaseID,
-		"stableModelVersionId":    s.rolloutCfg.StableModelVersionID,
-		"candidateModelVersionId": s.rolloutCfg.CandidateModelVersionID,
-		"candidatePercentage":     s.w.CurrentPercentage(),
-		"held":                    s.w.IsHeld(),
+		"active":                  true,
+		"rolloutId":               p.Cfg.RolloutID,
+		"rolloutPhaseId":          p.Cfg.RolloutPhaseID,
+		"stableModelVersionId":    p.Cfg.StableModelVersionID,
+		"candidateModelVersionId": p.Cfg.CandidateModelVersionID,
+		"candidatePercentage":     p.Writer.CurrentPercentage(),
+		"held":                    p.Writer.IsHeld(),
 	})
 }
 
 func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
-	total := s.store.TotalCount()
-	all := s.store.LastN(total)
-	window := s.store.Since(time.Now().Add(-2 * time.Minute))
+	p := s.pipeline.Load()
+	if p == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+		return
+	}
+
+	total := p.Store.TotalCount()
+	all := p.Store.LastN(total)
+	window := p.Store.Since(time.Now().Add(-2 * time.Minute))
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"active":             true,
 		"totalRequests":      total,
 		"overallErrorRate":   metrics.ErrorRate(all),
 		"windowRequestCount": len(window),
@@ -113,7 +119,13 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetDecisions(w http.ResponseWriter, r *http.Request) {
-	decisions, err := s.repo.ListDecisions(r.Context(), s.rolloutCfg.RolloutID, 50)
+	p := s.pipeline.Load()
+	if p == nil {
+		writeJSON(w, http.StatusOK, []db.Decision{})
+		return
+	}
+
+	decisions, err := s.repo.ListDecisions(r.Context(), p.Cfg.RolloutID, 50)
 	if err != nil {
 		log.Printf("api: list decisions: %v", err)
 		http.Error(w, "failed to load decisions", http.StatusInternalServerError)
@@ -207,7 +219,12 @@ func (s *Server) writeModelConfigError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
-	s.w.Commands <- writer.Command{
+	p := s.pipeline.Load()
+	if p == nil {
+		http.Error(w, "no active rollout", http.StatusConflict)
+		return
+	}
+	p.Writer.Commands <- writer.Command{
 		Type:   writer.CmdRollback,
 		Reason: "manual rollback via API",
 		Source: "manual",

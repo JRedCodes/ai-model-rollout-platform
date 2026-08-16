@@ -2,13 +2,20 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/JRedCodes/rollout-controller/internal/config"
 )
+
+// ErrNoActiveRollout means no rollout is currently RUNNING or HELD. This is
+// an expected, non-fatal state — e.g. right after a rollout COMPLETEs and
+// before the next one is created via the Management API.
+var ErrNoActiveRollout = errors.New("no active rollout")
 
 type Decision struct {
 	Action    string    `json:"action"`
@@ -67,6 +74,9 @@ func (r *RolloutRepository) LoadActive(ctx context.Context) (config.RolloutConfi
 		&policy.AdvanceMaxP95LatencyMs,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return cfg, policy, ErrNoActiveRollout
+		}
 		return cfg, policy, fmt.Errorf("load active rollout: %w", err)
 	}
 
@@ -79,6 +89,26 @@ func (r *RolloutRepository) LoadActive(ctx context.Context) (config.RolloutConfi
 	cfg.StreamConsumerName = "controller-1"
 
 	return cfg, policy, nil
+}
+
+// ActiveRolloutID returns just the ID of the current RUNNING/HELD rollout,
+// for the supervisor loop's cheap polling check. Returns ErrNoActiveRollout
+// if none exists.
+func (r *RolloutRepository) ActiveRolloutID(ctx context.Context) (string, error) {
+	var id string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id FROM rollouts
+		WHERE status IN ('RUNNING', 'HELD')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNoActiveRollout
+		}
+		return "", fmt.Errorf("active rollout id: %w", err)
+	}
+	return id, nil
 }
 
 func (r *RolloutRepository) UpdateStatus(ctx context.Context, rolloutID, status string) error {

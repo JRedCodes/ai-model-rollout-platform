@@ -17,13 +17,20 @@ type Consumer struct {
 	streamKey     string
 	consumerGroup string
 	consumerName  string
+	rolloutID     string
 	store         *metrics.Store
 	logger        *batchlogger.BatchLogger
 }
 
+// New builds a consumer scoped to one tenant's rollout. Even though each
+// tenant gets its own consumer group (so tenants' consumers don't compete
+// over message distribution), every group still independently sees the
+// *entire* shared stream -- Redis Streams consumer groups have no
+// server-side content filtering. rolloutID is what process() uses to
+// discard every other tenant's events client-side.
 func New(
 	rdb *redis.Client,
-	streamKey, consumerGroup, consumerName string,
+	streamKey, consumerGroup, consumerName, rolloutID string,
 	store *metrics.Store,
 	logger *batchlogger.BatchLogger,
 ) *Consumer {
@@ -32,6 +39,7 @@ func New(
 		streamKey:     streamKey,
 		consumerGroup: consumerGroup,
 		consumerName:  consumerName,
+		rolloutID:     rolloutID,
 		store:         store,
 		logger:        logger,
 	}
@@ -100,6 +108,17 @@ func (c *Consumer) process(ctx context.Context, msg redis.XMessage) {
 	var event streamEvent
 	if err := json.Unmarshal([]byte(raw), &event); err != nil {
 		log.Printf("ingestion: failed to parse event %s: %v", msg.ID, err)
+		c.ack(ctx, msg.ID)
+		return
+	}
+
+	// Not this pipeline's rollout -- another tenant's event, seen only
+	// because consumer groups can't filter server-side. Ack it so this
+	// group's cursor advances (some other tenant's own consumer group is
+	// independently seeing and recording the same message), but don't
+	// record it into this store or enqueue it -- the batch logger is a
+	// single shared instance, so enqueuing here too would double-insert.
+	if event.RolloutID == nil || *event.RolloutID != c.rolloutID {
 		c.ack(ctx, msg.ID)
 		return
 	}

@@ -242,6 +242,7 @@ func runPipeline(
 		rolloutCfg.StreamKey,
 		rolloutCfg.StreamConsumerGroup,
 		rolloutCfg.StreamConsumerName,
+		rolloutCfg.RolloutID,
 		store,
 		bl,
 	)

@@ -9,12 +9,23 @@ const { values } = parseArgs({
   options: {
     mode: { type: "string", default: "steady" },
     reset: { type: "boolean", default: false },
+    apiKey: { type: "string" },
   },
   strict: false,
 });
 
 const mode: "steady" | "burst" =
   values.mode === "burst" ? "burst" : "steady";
+
+// Which tenant this run is paired with. Defaults to the seeded demo
+// tenant's key so the existing scenarios keep working unmodified, but
+// running two instances with different --apiKey values (one per tenant)
+// exercises two rollouts' guard/controller pipelines independently.
+const DEFAULT_DEMO_API_KEY = "tk_demo_2218a6e29efe8f4b3378390b46a0710d";
+const apiKey =
+  (typeof values.apiKey === "string" ? values.apiKey : undefined) ??
+  process.env.TENANT_API_KEY ??
+  DEFAULT_DEMO_API_KEY;
 
 const SCENARIOS = {
   steady: {
@@ -76,6 +87,7 @@ console.log();
 console.log(
   `  ${c.bold("Mode")}:      ${mode === "burst" ? c.yellow(mode) : mode}  ${c.dim("(" + scenario.label + ")")}`,
 );
+console.log(`  ${c.bold("Tenant key")}: ${c.dim(apiKey.slice(0, 12) + "…")}`);
 console.log(`  ${c.bold("Profile")}:   ${scenario.description}`);
 console.log();
 console.log(`  ${c.bold("MODEL CONFIG")}`);
@@ -94,12 +106,22 @@ console.log();
 
 if (values.reset) {
   process.stdout.write("  Resetting rollout in Postgres...");
-  await reset(mode);
+  await reset(mode, apiKey);
   console.log(" ✓");
   console.log();
   console.log(
     c.yellow(
-      "  ⚠  Restart the rollout controller so it reloads config from DB and re-seeds Redis.",
+      "  ⚠  Restart the rollout controller: this reset an already-active rollout in",
+    ),
+  );
+  console.log(
+    c.yellow(
+      "     place via SQL, which the supervisor's change detection doesn't pick up",
+    ),
+  );
+  console.log(
+    c.yellow(
+      "     on its own (it only notices a rollout's ID appearing/changing/disappearing).",
     ),
   );
   console.log(
@@ -111,8 +133,8 @@ if (values.reset) {
   process.exit(0);
 }
 
-const runner = new Runner(scenario.rps, scenario.durationSecs);
-const monitor = new Monitor(runner);
+const runner = new Runner(scenario.rps, scenario.durationSecs, apiKey);
+const monitor = new Monitor(runner, apiKey);
 
 monitor.start();
 const finalStats = await runner.run();

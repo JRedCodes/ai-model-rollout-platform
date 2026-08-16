@@ -16,6 +16,7 @@ Built as an incremental engineering project — each subsystem developed and ver
                 │                                       │ GET /api/models
                 │                                       │ PUT /api/models/:id
                 │                                       │ GET /api/events (SSE)
+                │                                       │ POST /api/rollouts
                 │                                       │
                 ▼                                       ▼
         ┌────────────────┐                        ┌────────────────────┐
@@ -116,16 +117,24 @@ npm start -- --mode=steady --reset
 
 ### Rollout Controller — `apps/rollout-controller` (Go, port 4003)
 
-Single binary with six goroutines:
+Single binary. Three goroutines run for the process's whole life, independent of which (if any) rollout is active:
+
+| Goroutine | Interval | Responsibility |
+|-----------|----------|----------------|
+| `api` | — | HTTP read/write API, SSE hub, manual rollback |
+| `batchlogger` | 10s | Bulk-flushes inference events to `inference_events` via `COPY` |
+| `modelConfigSeeder` | heartbeat | Re-publishes model configurations from Postgres to Redis |
+
+A **supervisor loop** in `main.go` polls Postgres for the current `RUNNING`/`HELD` rollout and runs four more goroutines scoped to it — tearing them down and rebuilding fresh whenever a different rollout becomes active (or none does), with no process restart:
 
 | Goroutine | Interval | Responsibility |
 |-----------|----------|----------------|
 | `ingestion` | continuous | Consumes Redis Stream via consumer group, writes to metrics store + batch logger buffer |
-| `batchlogger` | 10s | Bulk-flushes inference events to `inference_events` via `COPY` |
 | `guard` | 5s | Early rollback detection — fresh window (last 50 reqs) and absolute window |
 | `controller` | 2 min | Evaluates error rate + P95 latency; advances, holds, or resumes the rollout |
 | `writer` | event-driven + 60s heartbeat | Sole owner of Redis and Postgres writes; re-seeds the Redis feature flag every 60s; broadcasts SSE events to connected dashboard clients |
-| `api` | — | HTTP read/write API, SSE hub, manual rollback |
+
+When no rollout is active, the process idles rather than exiting — `GET /rollout` and `GET /rollout/metrics` respond with `{"active": false}` until the next rollout is created via `POST /rollouts`.
 
 ### Contracts — `packages/contracts` (TypeScript)
 
@@ -185,27 +194,7 @@ CREATE DATABASE rollout_platform;
 
 Migrations run automatically when the rollout controller starts.
 
-### 4. Seed your first rollout
-
-The rollout controller requires at least one `RUNNING` row in the `rollouts` table. Insert one before starting the controller:
-
-```bash
-psql postgresql://<your-mac-username>@localhost:5432/rollout_platform -c "
-INSERT INTO rollouts (
-    id, rollout_phase_id,
-    stable_model_version_id, candidate_model_version_id,
-    candidate_percentage, configuration_version,
-    status, feature_flag_key
-) VALUES (
-    'rollout-001', 'phase-1',
-    'model-v1', 'model-v2',
-    10, 1,
-    'RUNNING', 'feature-flag:model-routing:development'
-);
-"
-```
-
-### 5. Start the services
+### 4. Start the services
 
 Each in its own terminal:
 
@@ -222,6 +211,22 @@ cd apps/rollout-controller && go run .
 # Dashboard (optional — open http://localhost:5173)
 npm run dev --workspace @rollout-platform/dashboard
 ```
+
+The rollout controller no longer requires a pre-existing `rollouts` row — it starts up idle and waits for one.
+
+### 5. Create your first rollout
+
+```bash
+curl -X POST localhost:4003/rollouts \
+  -d '{
+    "rolloutPhaseId": "phase-1",
+    "stableModelVersionId": "model-v1",
+    "candidateModelVersionId": "model-v2",
+    "candidatePercentage": 10
+  }'
+```
+
+Or use the dashboard's create-rollout form, shown automatically whenever no rollout is active. The controller picks it up within ~5 seconds — no restart needed.
 
 ---
 
@@ -252,6 +257,7 @@ npm run dev --workspace @rollout-platform/dashboard
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
 | `DATABASE_URL` | `postgres://jakeredding@localhost:5432/rollout_platform` | Postgres connection URL |
 | `MIGRATIONS_PATH` | `./migrations` | Path to SQL migration files |
+| `FEATURE_FLAG_KEY` | `feature-flag:model-routing:development` | Redis key new rollouts publish their feature flag under — must match the Edge Evaluator's `FEATURE_FLAG_KEY` |
 
 ---
 
@@ -283,10 +289,13 @@ curl -X POST http://localhost:4002/v1/infer \
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `GET` | `/rollout` | Current rollout state (model versions, percentage, held status) |
-| `GET` | `/rollout/metrics` | Live metrics snapshot (error rates, P95 latency, window counts) |
-| `GET` | `/rollout/decisions` | Last 50 decisions for the active rollout |
-| `POST` | `/rollout/rollback` | Force an immediate rollback, bypassing guard/controller |
+| `GET` | `/rollout` | Current rollout state (model versions, percentage, held status), or `{"active": false}` if none is active |
+| `GET` | `/rollout/metrics` | Live metrics snapshot (error rates, P95 latency, window counts), or `{"active": false}` |
+| `GET` | `/rollout/decisions` | Last 50 decisions for the active rollout (`[]` if none) |
+| `POST` | `/rollout/rollback` | Force an immediate rollback, bypassing guard/controller — `409` if no rollout is active |
+| `GET` | `/rollouts` | List all rollouts, newest first |
+| `GET` | `/rollouts/{id}` | Get a single rollout by ID |
+| `POST` | `/rollouts` | Create a rollout — `409` if one is already `RUNNING`/`HELD`. `stableModelVersionId` is optional; omitted, it defaults to the most recently `COMPLETED` rollout's candidate |
 | `GET` | `/models` | List model configurations (failure rate, latency range) |
 | `GET` | `/models/{id}` | Get a single model's configuration |
 | `PUT` | `/models/{id}` | Update a model's failure rate and latency range — persists to Postgres, publishes to Redis, broadcasts an SSE event |
@@ -316,7 +325,15 @@ The controller advances one step per successful 2-minute evaluation window.
 | Error rate | > 2% | Hold |
 | P95 latency | > 250ms | Hold |
 
-**Guard always wins.** When the guard issues a rollback, the held flag blocks any advance. Only `POST /rollout/rollback` (or a new rollout row) recovers from a rollback.
+**Guard always wins.** When the guard issues a rollback, the held flag blocks any advance. Recovery requires creating a new rollout via `POST /rollouts`.
+
+### Completion promotes the winner
+
+Reaching 100% and staying healthy fires `COMPLETE`. The rollout's candidate is promoted to stable in-memory before the feature flag is cleared, so traffic keeps flowing to the model that won — completing a rollout locks in the candidate, it doesn't revert to the pre-rollout model. The controller then goes idle (see below) until the next rollout is created.
+
+### No active rollout is a valid state
+
+The controller doesn't require a rollout to be running. On boot, or any time none is `RUNNING`/`HELD` (e.g. right after a `COMPLETE`), it idles: `GET /rollout` and `GET /rollout/metrics` return `{"active": false}`, and a supervisor loop polls Postgres every ~5s for a newly created rollout. Creating one via `POST /rollouts` — with `stableModelVersionId` left unset to default to the last completed rollout's candidate — is how a completed rollout's "next slot" gets filled; the controller picks it up within one poll cycle, no restart required.
 
 ### HOLD recovers automatically; ROLLBACK doesn't
 
@@ -356,7 +373,7 @@ cd apps/rollout-controller && go build ./... && go vet ./...
 ## Database Schema
 
 ### `rollouts`
-Stores the rollout configuration and current lifecycle status. Policy fields (thresholds, window sizes) are inlined per row — multiple concurrent rollouts can carry independent policies. The `status` column drives what the controller evaluates: only `RUNNING` and `HELD` rows are loaded.
+Stores the rollout configuration and current lifecycle status. Policy fields (thresholds, window sizes) are inlined per row, so each rollout could in principle carry its own policy — though today's Management API doesn't expose overriding them yet. Only one rollout may be `RUNNING`/`HELD` at a time, enforced by a partial unique index (`rollouts_single_active_idx`); the `status` column drives what the supervisor loop loads.
 
 ### `inference_events`
 One row per inference, written by the batch logger in 10-second bulk flushes. Indexed on `(rollout_id, occurred_at)` for the time-window queries the guard and controller issue.
@@ -382,7 +399,7 @@ Per-model-version simulation params (`failure_rate`, `min_latency_ms`, `max_late
 - [x] Stress tester — steady advance and burst guard-rollback scenarios, live monitor, final report
 - [x] React dashboard — live status panel, metrics panel, decision feed, SSE-driven updates, force rollback
 - [x] Dynamic model configuration — Postgres-backed model params, mid-rollout config changes via dashboard
-- [ ] Management API — create and configure rollouts via HTTP (no psql required)
-- [ ] Promotion loop — on COMPLETE, promote candidate to stable and prepare next rollout slot
+- [x] Management API — create and configure rollouts via HTTP (no psql required)
+- [x] Promotion loop — on COMPLETE, promote candidate to stable and prepare next rollout slot
 - [ ] Multi-tenant rollouts (per-user model pairs)
 - [ ] Authentication

@@ -1,9 +1,12 @@
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { MetricsPanel } from "./MetricsPanel.tsx";
 import { DecisionFeed } from "./DecisionFeed.tsx";
 import { ModelConfigPanel } from "./ModelConfigPanel.tsx";
+import { ApiKeyGate } from "./ApiKeyGate.tsx";
 import { useSSE } from "./useSSE.ts";
+import { getApiKey, onApiKeyChange } from "./apiKey.ts";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,10 +38,20 @@ function Dashboard() {
   );
 }
 
+function useApiKeyPresent(): boolean {
+  const [hasKey, setHasKey] = useState(() => getApiKey() !== null);
+
+  useEffect(() => onApiKeyChange(() => setHasKey(getApiKey() !== null)), []);
+
+  return hasKey;
+}
+
 export default function App() {
+  const hasKey = useApiKeyPresent();
+
   return (
     <QueryClientProvider client={queryClient}>
-      <Dashboard />
+      {hasKey ? <Dashboard /> : <ApiKeyGate />}
     </QueryClientProvider>
   );
 }

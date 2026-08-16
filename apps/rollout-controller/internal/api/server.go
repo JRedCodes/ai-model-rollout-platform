@@ -55,13 +55,16 @@ func New(
 		featureFlagKeyPrefix: featureFlagKeyPrefix,
 	}
 
-	// Unauthenticated: health check, and tenant bootstrapping (which has no
-	// tenant key to present yet -- it's gated by ADMIN_API_KEY instead).
+	// Unauthenticated: health check, tenant bootstrapping (gated by
+	// ADMIN_API_KEY instead), and SSE -- browsers' EventSource can't send
+	// custom headers at all, so it authenticates itself via a query param
+	// instead of going through authMiddleware. See handleEvents.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /tenants", s.handleCreateTenant)
+	mux.HandleFunc("GET /events", s.handleEvents)
 
-	// Every other route requires a valid tenant API key.
+	// Every other route requires a valid tenant API key via the Authorization header.
 	authed := http.NewServeMux()
 	authed.HandleFunc("GET /rollout", s.handleGetRollout)
 	authed.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
@@ -73,7 +76,6 @@ func New(
 	authed.HandleFunc("GET /models", s.handleListModels)
 	authed.HandleFunc("GET /models/{id}", s.handleGetModel)
 	authed.HandleFunc("PUT /models/{id}", s.handleUpdateModel)
-	authed.HandleFunc("GET /events", s.handleEvents)
 	mux.Handle("/", s.authMiddleware(authed))
 
 	s.httpServer = &http.Server{
@@ -88,32 +90,46 @@ type contextKey int
 
 const tenantIDContextKey contextKey = iota
 
-// authMiddleware resolves "Authorization: Bearer <key>" to a tenant ID via
-// Postgres (the Go service has direct DB access, unlike the Edge Evaluator,
-// so it doesn't need the Redis tenant-auth cache) and stores it in the
-// request context for handlers to read via tenantIDFromContext.
+// authMiddleware resolves "Authorization: Bearer <key>" to a tenant ID and
+// stores it in the request context for handlers to read via
+// tenantIDFromContext.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if key == "" {
-			http.Error(w, "missing bearer token", http.StatusUnauthorized)
-			return
-		}
-
-		tenantID, err := s.tenantRepo.GetIDByAPIKey(r.Context(), key)
+		tenantID, err := s.resolveAPIKey(r.Context(), key)
 		if err != nil {
-			if errors.Is(err, tenant.ErrInvalidAPIKey) {
-				http.Error(w, "invalid api key", http.StatusUnauthorized)
-				return
-			}
-			log.Printf("api: auth lookup failed: %v", err)
-			http.Error(w, "authentication failed", http.StatusInternalServerError)
+			writeAuthError(w, err)
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), tenantIDContextKey, tenantID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// resolveAPIKey looks up a tenant ID via Postgres (the Go service has
+// direct DB access, unlike the Edge Evaluator, so it doesn't need the
+// Redis tenant-auth cache).
+func (s *Server) resolveAPIKey(ctx context.Context, key string) (string, error) {
+	if key == "" {
+		return "", errMissingAPIKey
+	}
+	return s.tenantRepo.GetIDByAPIKey(ctx, key)
+}
+
+var errMissingAPIKey = errors.New("missing api key")
+
+func writeAuthError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errMissingAPIKey) {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+	if errors.Is(err, tenant.ErrInvalidAPIKey) {
+		http.Error(w, "invalid api key", http.StatusUnauthorized)
+		return
+	}
+	log.Printf("api: auth lookup failed: %v", err)
+	http.Error(w, "authentication failed", http.StatusInternalServerError)
 }
 
 func tenantIDFromContext(ctx context.Context) string {
@@ -455,10 +471,23 @@ func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, rollout)
 }
 
-// handleEvents serves the SSE stream for the authenticated tenant's own hub
-// -- resolved per-request since which hub applies depends on the caller.
+// handleEvents serves the SSE stream for the authenticated tenant's own
+// hub. Not behind authMiddleware: browsers' EventSource can't send custom
+// headers, so this accepts the API key as either the usual Authorization
+// header or an api_key query param, whichever is present.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	s.hubs.Get(tenantIDFromContext(r.Context())).ServeHTTP(w, r)
+	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if key == "" {
+		key = r.URL.Query().Get("api_key")
+	}
+
+	tenantID, err := s.resolveAPIKey(r.Context(), key)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+
+	s.hubs.Get(tenantID).ServeHTTP(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

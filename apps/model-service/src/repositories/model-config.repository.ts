@@ -23,8 +23,11 @@ export class UnsupportedModelVersionError extends Error {
   }
 }
 
-function redisKey(modelVersionId: string): string {
-  return `${REDIS_KEY_PREFIX}${modelVersionId}`;
+// Tenant-scoped: each tenant has its own independent model catalog, so the
+// model version ID alone isn't a unique cache key -- two tenants can each
+// have their own "model-v1" with different simulated behavior.
+function redisKey(tenantId: string, modelVersionId: string): string {
+  return `${REDIS_KEY_PREFIX}${tenantId}:${modelVersionId}`;
 }
 
 function buildDefaultProfile(
@@ -40,12 +43,13 @@ function buildDefaultProfile(
 }
 
 export async function getModelConfig(
+  tenantId: string,
   modelVersionId: string,
 ): Promise<ModelSimulationProfile> {
   let serializedProfile: string | null;
 
   try {
-    serializedProfile = await redisClient.get(redisKey(modelVersionId));
+    serializedProfile = await redisClient.get(redisKey(tenantId, modelVersionId));
   } catch (cause) {
     console.warn(
       `model-config: redis unavailable, falling back to default profile for ${modelVersionId}`,

@@ -24,7 +24,7 @@ export async function simulateInference(
   modelVersionId: string,
   request: ModelInferenceRequest,
 ): Promise<ModelInferenceResponse> {
-  const configuration = await getModelConfig(modelVersionId);
+  const configuration = await getModelConfig(request.tenantId, modelVersionId);
 
   const latencyMs = randomInteger(
     configuration.minLatencyMs,

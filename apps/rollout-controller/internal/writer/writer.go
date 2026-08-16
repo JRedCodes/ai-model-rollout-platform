@@ -187,10 +187,12 @@ func (w *Writer) handle(ctx context.Context, cmd Command) error {
 		return w.advance(ctx, cmd.Reason, source)
 
 	case CmdComplete:
+		promoted := w.candidateID
+		w.stableID = promoted
 		w.pct.Store(0)
-		log.Printf("writer: COMPLETE — %s", cmd.Reason)
+		log.Printf("writer: COMPLETE — %s, promoting %s to stable", cmd.Reason, promoted)
 		w.persistDecision(ctx, string(CmdComplete), cmd.Reason, source)
-		w.emit("complete", map[string]any{"reason": cmd.Reason, "source": source})
+		w.emit("complete", map[string]any{"reason": cmd.Reason, "source": source, "promotedModelVersionId": promoted})
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
 			return err
 		}
@@ -206,9 +208,11 @@ func (w *Writer) advance(ctx context.Context, reason, source string) error {
 	next, done := nextPercentage(current)
 
 	if done {
+		promoted := w.candidateID
+		w.stableID = promoted
 		w.pct.Store(0)
-		log.Printf("writer: COMPLETE — rollout fully ramped at %d%%", current)
-		w.emit("complete", map[string]any{"reason": "fully ramped at 100%", "source": source})
+		log.Printf("writer: COMPLETE — rollout fully ramped at %d%%, promoting %s to stable", current, promoted)
+		w.emit("complete", map[string]any{"reason": "fully ramped at 100%", "source": source, "promotedModelVersionId": promoted})
 		if err := w.repo.UpdateStatus(ctx, w.rolloutID, "COMPLETED"); err != nil {
 			return err
 		}

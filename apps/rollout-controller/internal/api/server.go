@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/JRedCodes/rollout-controller/internal/config"
 	"github.com/JRedCodes/rollout-controller/internal/db"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
 	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
@@ -17,34 +16,31 @@ import (
 )
 
 type Server struct {
-	rolloutCfg      config.RolloutConfig
-	store           *metrics.Store
-	w               *writer.Writer
+	pipeline        *PipelineHolder
 	repo            *db.RolloutRepository
 	hub             *SSEHub
 	modelConfigRepo *modelconfig.Repository
 	modelConfigPub  *modelconfig.Seeder
+	featureFlagKey  string
 	httpServer      *http.Server
 }
 
 func New(
 	port int,
-	rolloutCfg config.RolloutConfig,
-	store *metrics.Store,
-	w *writer.Writer,
+	pipeline *PipelineHolder,
 	repo *db.RolloutRepository,
 	hub *SSEHub,
 	modelConfigRepo *modelconfig.Repository,
 	modelConfigPub *modelconfig.Seeder,
+	featureFlagKey string,
 ) *Server {
 	s := &Server{
-		rolloutCfg:      rolloutCfg,
-		store:           store,
-		w:               w,
+		pipeline:        pipeline,
 		repo:            repo,
 		hub:             hub,
 		modelConfigRepo: modelConfigRepo,
 		modelConfigPub:  modelConfigPub,
+		featureFlagKey:  featureFlagKey,
 	}
 
 	mux := http.NewServeMux()
@@ -53,6 +49,9 @@ func New(
 	mux.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
 	mux.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)
 	mux.HandleFunc("POST /rollout/rollback", s.handleRollback)
+	mux.HandleFunc("GET /rollouts", s.handleListRollouts)
+	mux.HandleFunc("GET /rollouts/{id}", s.handleGetRolloutByID)
+	mux.HandleFunc("POST /rollouts", s.handleCreateRollout)
 	mux.HandleFunc("GET /models", s.handleListModels)
 	mux.HandleFunc("GET /models/{id}", s.handleGetModel)
 	mux.HandleFunc("PUT /models/{id}", s.handleUpdateModel)
@@ -88,22 +87,35 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetRollout(w http.ResponseWriter, r *http.Request) {
+	p := s.pipeline.Load()
+	if p == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"rolloutId":               s.rolloutCfg.RolloutID,
-		"rolloutPhaseId":          s.rolloutCfg.RolloutPhaseID,
-		"stableModelVersionId":    s.rolloutCfg.StableModelVersionID,
-		"candidateModelVersionId": s.rolloutCfg.CandidateModelVersionID,
-		"candidatePercentage":     s.w.CurrentPercentage(),
-		"held":                    s.w.IsHeld(),
+		"active":                  true,
+		"rolloutId":               p.Cfg.RolloutID,
+		"rolloutPhaseId":          p.Cfg.RolloutPhaseID,
+		"stableModelVersionId":    p.Cfg.StableModelVersionID,
+		"candidateModelVersionId": p.Cfg.CandidateModelVersionID,
+		"candidatePercentage":     p.Writer.CurrentPercentage(),
+		"held":                    p.Writer.IsHeld(),
 	})
 }
 
 func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
-	total := s.store.TotalCount()
-	all := s.store.LastN(total)
-	window := s.store.Since(time.Now().Add(-2 * time.Minute))
+	p := s.pipeline.Load()
+	if p == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+		return
+	}
+
+	total := p.Store.TotalCount()
+	all := p.Store.LastN(total)
+	window := p.Store.Since(time.Now().Add(-2 * time.Minute))
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"active":             true,
 		"totalRequests":      total,
 		"overallErrorRate":   metrics.ErrorRate(all),
 		"windowRequestCount": len(window),
@@ -113,7 +125,13 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetDecisions(w http.ResponseWriter, r *http.Request) {
-	decisions, err := s.repo.ListDecisions(r.Context(), s.rolloutCfg.RolloutID, 50)
+	p := s.pipeline.Load()
+	if p == nil {
+		writeJSON(w, http.StatusOK, []db.Decision{})
+		return
+	}
+
+	decisions, err := s.repo.ListDecisions(r.Context(), p.Cfg.RolloutID, 50)
 	if err != nil {
 		log.Printf("api: list decisions: %v", err)
 		http.Error(w, "failed to load decisions", http.StatusInternalServerError)
@@ -207,12 +225,130 @@ func (s *Server) writeModelConfigError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
-	s.w.Commands <- writer.Command{
+	p := s.pipeline.Load()
+	if p == nil {
+		http.Error(w, "no active rollout", http.StatusConflict)
+		return
+	}
+	p.Writer.Commands <- writer.Command{
 		Type:   writer.CmdRollback,
 		Reason: "manual rollback via API",
 		Source: "manual",
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "rollback initiated"})
+}
+
+func (s *Server) handleListRollouts(w http.ResponseWriter, r *http.Request) {
+	rollouts, err := s.repo.ListRollouts(r.Context())
+	if err != nil {
+		log.Printf("api: list rollouts: %v", err)
+		http.Error(w, "failed to load rollouts", http.StatusInternalServerError)
+		return
+	}
+	if rollouts == nil {
+		rollouts = []db.Rollout{}
+	}
+	writeJSON(w, http.StatusOK, rollouts)
+}
+
+func (s *Server) handleGetRolloutByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	rollout, err := s.repo.GetRollout(r.Context(), id)
+	if err != nil {
+		if notFound, ok := errors.AsType[*db.RolloutNotFoundError](err); ok {
+			http.Error(w, notFound.Error(), http.StatusNotFound)
+			return
+		}
+		log.Printf("api: get rollout: %v", err)
+		http.Error(w, "failed to load rollout", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, rollout)
+}
+
+type createRolloutRequest struct {
+	RolloutPhaseID          string  `json:"rolloutPhaseId"`
+	StableModelVersionID    *string `json:"stableModelVersionId"`
+	CandidateModelVersionID string  `json:"candidateModelVersionId"`
+	CandidatePercentage     *int    `json:"candidatePercentage"`
+}
+
+// handleCreateRollout creates a new rollout, replacing the old manual psql
+// INSERT workflow. If stableModelVersionId is omitted, it defaults to the
+// most recently COMPLETED rollout's candidate — the "promote candidate to
+// stable, prepare next rollout slot" behavior.
+func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
+	var body createRolloutRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.RolloutPhaseID == "" {
+		http.Error(w, "rolloutPhaseId is required", http.StatusBadRequest)
+		return
+	}
+	if body.CandidateModelVersionID == "" {
+		http.Error(w, "candidateModelVersionId is required", http.StatusBadRequest)
+		return
+	}
+
+	percentage := 10
+	if body.CandidatePercentage != nil {
+		if *body.CandidatePercentage < 0 || *body.CandidatePercentage > 100 {
+			http.Error(w, "candidatePercentage must be between 0 and 100", http.StatusBadRequest)
+			return
+		}
+		percentage = *body.CandidatePercentage
+	}
+
+	if _, err := s.modelConfigRepo.Get(r.Context(), body.CandidateModelVersionID); err != nil {
+		s.writeModelConfigError(w, err)
+		return
+	}
+
+	stableID := ""
+	if body.StableModelVersionID != nil && *body.StableModelVersionID != "" {
+		stableID = *body.StableModelVersionID
+	} else {
+		promoted, err := s.repo.LatestCompletedCandidate(r.Context())
+		if err != nil {
+			if errors.Is(err, db.ErrNoCompletedRollout) {
+				http.Error(w, "stableModelVersionId is required (no completed rollout to default it from)", http.StatusBadRequest)
+				return
+			}
+			log.Printf("api: latest completed candidate: %v", err)
+			http.Error(w, "failed to resolve stable model version", http.StatusInternalServerError)
+			return
+		}
+		stableID = promoted
+	}
+
+	if _, err := s.modelConfigRepo.Get(r.Context(), stableID); err != nil {
+		s.writeModelConfigError(w, err)
+		return
+	}
+
+	rollout, err := s.repo.CreateRollout(r.Context(), db.CreateRolloutInput{
+		RolloutPhaseID:          body.RolloutPhaseID,
+		StableModelVersionID:    stableID,
+		CandidateModelVersionID: body.CandidateModelVersionID,
+		CandidatePercentage:     percentage,
+		FeatureFlagKey:          s.featureFlagKey,
+	})
+	if err != nil {
+		if errors.Is(err, db.ErrActiveRolloutExists) {
+			http.Error(w, "an active rollout already exists", http.StatusConflict)
+			return
+		}
+		log.Printf("api: create rollout: %v", err)
+		http.Error(w, "failed to create rollout", http.StatusInternalServerError)
+		return
+	}
+
+	s.hub.Broadcast("rollout-created", rollout)
+	writeJSON(w, http.StatusCreated, rollout)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

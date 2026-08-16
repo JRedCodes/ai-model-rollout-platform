@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchRollout, postRollback } from "./api.ts";
+import { CreateRolloutPanel } from "./CreateRolloutPanel.tsx";
 
 const LADDER = [10, 25, 50, 75, 100];
 
@@ -81,6 +82,20 @@ export function StatusPanel() {
     return (
       <div className="rounded-lg border border-red-900/50 bg-red-950/20 p-6 text-red-400 text-sm">
         Could not reach rollout controller. Is it running on :4003?
+      </div>
+    );
+  }
+
+  if (!data.active) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border border-slate-800 bg-slate-900 p-6">
+          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Rollout</p>
+          <p className="text-sm text-slate-400">
+            No active rollout — create one below to start shifting traffic.
+          </p>
+        </div>
+        <CreateRolloutPanel />
       </div>
     );
   }

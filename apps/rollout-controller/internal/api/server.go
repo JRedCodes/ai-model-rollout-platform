@@ -19,9 +19,9 @@ import (
 )
 
 type Server struct {
-	pipeline             *PipelineHolder
+	pipelines            *PipelineRegistry
 	repo                 *db.RolloutRepository
-	hub                  *SSEHub
+	hubs                 *SSEHubRegistry
 	modelConfigRepo      *modelconfig.Repository
 	modelConfigPub       *modelconfig.Seeder
 	tenantRepo           *tenant.Repository
@@ -33,9 +33,9 @@ type Server struct {
 
 func New(
 	port int,
-	pipeline *PipelineHolder,
+	pipelines *PipelineRegistry,
 	repo *db.RolloutRepository,
-	hub *SSEHub,
+	hubs *SSEHubRegistry,
 	modelConfigRepo *modelconfig.Repository,
 	modelConfigPub *modelconfig.Seeder,
 	tenantRepo *tenant.Repository,
@@ -44,9 +44,9 @@ func New(
 	featureFlagKeyPrefix string,
 ) *Server {
 	s := &Server{
-		pipeline:             pipeline,
+		pipelines:            pipelines,
 		repo:                 repo,
-		hub:                  hub,
+		hubs:                 hubs,
 		modelConfigRepo:      modelConfigRepo,
 		modelConfigPub:       modelConfigPub,
 		tenantRepo:           tenantRepo,
@@ -73,7 +73,7 @@ func New(
 	authed.HandleFunc("GET /models", s.handleListModels)
 	authed.HandleFunc("GET /models/{id}", s.handleGetModel)
 	authed.HandleFunc("PUT /models/{id}", s.handleUpdateModel)
-	authed.Handle("GET /events", hub)
+	authed.HandleFunc("GET /events", s.handleEvents)
 	mux.Handle("/", s.authMiddleware(authed))
 
 	s.httpServer = &http.Server{
@@ -188,7 +188,7 @@ func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetRollout(w http.ResponseWriter, r *http.Request) {
-	p := s.pipeline.Load()
+	p := s.pipelines.Get(tenantIDFromContext(r.Context()))
 	if p == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"active": false})
 		return
@@ -205,7 +205,7 @@ func (s *Server) handleGetRollout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
-	p := s.pipeline.Load()
+	p := s.pipelines.Get(tenantIDFromContext(r.Context()))
 	if p == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"active": false})
 		return
@@ -226,7 +226,7 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetDecisions(w http.ResponseWriter, r *http.Request) {
-	p := s.pipeline.Load()
+	p := s.pipelines.Get(tenantIDFromContext(r.Context()))
 	if p == nil {
 		writeJSON(w, http.StatusOK, []db.Decision{})
 		return
@@ -312,7 +312,7 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.hub.Broadcast("model-config-updated", profile)
+	s.hubs.Get(tenantIDFromContext(r.Context())).Broadcast("model-config-updated", profile)
 	writeJSON(w, http.StatusOK, profile)
 }
 
@@ -326,7 +326,7 @@ func (s *Server) writeModelConfigError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
-	p := s.pipeline.Load()
+	p := s.pipelines.Get(tenantIDFromContext(r.Context()))
 	if p == nil {
 		http.Error(w, "no active rollout", http.StatusConflict)
 		return
@@ -451,8 +451,14 @@ func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.hub.Broadcast("rollout-created", rollout)
+	s.hubs.Get(tenantID).Broadcast("rollout-created", rollout)
 	writeJSON(w, http.StatusCreated, rollout)
+}
+
+// handleEvents serves the SSE stream for the authenticated tenant's own hub
+// -- resolved per-request since which hub applies depends on the caller.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	s.hubs.Get(tenantIDFromContext(r.Context())).ServeHTTP(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

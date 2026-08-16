@@ -139,7 +139,12 @@ func (c *Consumer) ack(ctx context.Context, id string) {
 }
 
 func (c *Consumer) ensureConsumerGroup(ctx context.Context) error {
-	err := c.rdb.XGroupCreateMkStream(ctx, c.streamKey, c.consumerGroup, "0").Err()
+	// "$" -- only messages published after this group is created. Each
+	// tenant's consumer group is created the first time its rollout
+	// activates, which can be long after the shared stream itself started
+	// accumulating other tenants' history; starting from "0" would replay
+	// all of that pre-existing history into a tenant that never asked for it.
+	err := c.rdb.XGroupCreateMkStream(ctx, c.streamKey, c.consumerGroup, "$").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
 		return err
 	}

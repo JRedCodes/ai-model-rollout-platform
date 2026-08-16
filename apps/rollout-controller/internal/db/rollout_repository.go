@@ -76,9 +76,9 @@ func NewRolloutRepository(pool *pgxpool.Pool) *RolloutRepository {
 	return &RolloutRepository{pool: pool}
 }
 
-// LoadActive reads the single RUNNING or HELD rollout from the DB and returns
-// its config and policy. Returns an error if no active rollout exists.
-func (r *RolloutRepository) LoadActive(ctx context.Context) (config.RolloutConfig, config.RolloutPolicy, error) {
+// LoadActiveForTenant reads tenantID's single RUNNING or HELD rollout and
+// returns its config and policy. Returns ErrNoActiveRollout if it has none.
+func (r *RolloutRepository) LoadActiveForTenant(ctx context.Context, tenantID string) (config.RolloutConfig, config.RolloutPolicy, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT
 			id, rollout_phase_id, stable_model_version_id,
@@ -89,10 +89,10 @@ func (r *RolloutRepository) LoadActive(ctx context.Context) (config.RolloutConfi
 			controller_interval_secs, advance_min_requests,
 			advance_max_error_rate, advance_max_p95_latency_ms
 		FROM rollouts
-		WHERE status IN ('RUNNING', 'HELD')
+		WHERE tenant_id = $1 AND status IN ('RUNNING', 'HELD')
 		ORDER BY created_at DESC
 		LIMIT 1
-	`)
+	`, tenantID)
 
 	var (
 		cfg         config.RolloutConfig
@@ -121,7 +121,7 @@ func (r *RolloutRepository) LoadActive(ctx context.Context) (config.RolloutConfi
 		if errors.Is(err, pgx.ErrNoRows) {
 			return cfg, policy, ErrNoActiveRollout
 		}
-		return cfg, policy, fmt.Errorf("load active rollout: %w", err)
+		return cfg, policy, fmt.Errorf("load active rollout for tenant %s: %w", tenantID, err)
 	}
 
 	if candidateID != nil {
@@ -129,30 +129,42 @@ func (r *RolloutRepository) LoadActive(ctx context.Context) (config.RolloutConfi
 	}
 
 	cfg.StreamKey = "telemetry:inference-completed"
-	cfg.StreamConsumerGroup = "rollout-controller"
+	// Per-tenant consumer group: each tenant's pipeline independently reads
+	// the whole shared stream and filters for its own rollout's events,
+	// rather than competing with other tenants' pipelines over one group.
+	cfg.StreamConsumerGroup = "rollout-controller-" + tenantID
 	cfg.StreamConsumerName = "controller-1"
 
 	return cfg, policy, nil
 }
 
-// ActiveRolloutID returns just the ID of the current RUNNING/HELD rollout,
-// for the supervisor loop's cheap polling check. Returns ErrNoActiveRollout
-// if none exists.
-func (r *RolloutRepository) ActiveRolloutID(ctx context.Context) (string, error) {
-	var id string
-	err := r.pool.QueryRow(ctx, `
-		SELECT id FROM rollouts
-		WHERE status IN ('RUNNING', 'HELD')
-		ORDER BY created_at DESC
-		LIMIT 1
-	`).Scan(&id)
+// ActiveRolloutRef is one tenant's currently active rollout, for the
+// supervisor's reconciliation loop.
+type ActiveRolloutRef struct {
+	TenantID  string
+	RolloutID string
+}
+
+// ListActiveRollouts returns every tenant's current RUNNING/HELD rollout
+// (at most one per tenant, enforced by rollouts_single_active_per_tenant_idx).
+func (r *RolloutRepository) ListActiveRollouts(ctx context.Context) ([]ActiveRolloutRef, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT tenant_id, id FROM rollouts WHERE status IN ('RUNNING', 'HELD')
+	`)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNoActiveRollout
-		}
-		return "", fmt.Errorf("active rollout id: %w", err)
+		return nil, fmt.Errorf("list active rollouts: %w", err)
 	}
-	return id, nil
+	defer rows.Close()
+
+	var refs []ActiveRolloutRef
+	for rows.Next() {
+		var ref ActiveRolloutRef
+		if err := rows.Scan(&ref.TenantID, &ref.RolloutID); err != nil {
+			return nil, fmt.Errorf("scan active rollout ref: %w", err)
+		}
+		refs = append(refs, ref)
+	}
+	return refs, rows.Err()
 }
 
 func (r *RolloutRepository) UpdateStatus(ctx context.Context, rolloutID, status string) error {

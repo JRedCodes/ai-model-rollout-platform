@@ -67,6 +67,10 @@ export function MetricsPanel() {
     );
   }
 
+  if (!data.active) {
+    return null;
+  }
+
   return (
     <div className="grid grid-cols-2 gap-4">
       <MetricCard

@@ -1,20 +1,43 @@
 const BASE = "/api";
 
-export interface RolloutState {
-  rolloutId: string;
+export type RolloutState =
+  | { active: false }
+  | {
+      active: true;
+      rolloutId: string;
+      rolloutPhaseId: string;
+      stableModelVersionId: string;
+      candidateModelVersionId: string;
+      candidatePercentage: number;
+      held: boolean;
+    };
+
+export type RolloutMetrics =
+  | { active: false }
+  | {
+      active: true;
+      totalRequests: number;
+      overallErrorRate: number;
+      windowRequestCount: number;
+      windowErrorRate: number;
+      windowP95LatencyMs: number;
+    };
+
+export interface Rollout {
+  id: string;
   rolloutPhaseId: string;
   stableModelVersionId: string;
-  candidateModelVersionId: string;
+  candidateModelVersionId: string | null;
   candidatePercentage: number;
-  held: boolean;
+  status: string;
+  createdAt: string;
 }
 
-export interface RolloutMetrics {
-  totalRequests: number;
-  overallErrorRate: number;
-  windowRequestCount: number;
-  windowErrorRate: number;
-  windowP95LatencyMs: number;
+export interface CreateRolloutInput {
+  rolloutPhaseId: string;
+  stableModelVersionId?: string;
+  candidateModelVersionId: string;
+  candidatePercentage?: number;
 }
 
 export interface Decision {
@@ -58,6 +81,19 @@ export async function fetchDecisions(): Promise<Decision[]> {
 export async function postRollback(): Promise<void> {
   const res = await fetch(`${BASE}/rollout/rollback`, { method: "POST" });
   if (!res.ok) throw new Error(`POST /rollout/rollback: ${res.status}`);
+}
+
+export async function createRollout(input: CreateRolloutInput): Promise<Rollout> {
+  const res = await fetch(`${BASE}/rollouts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const message = await res.text();
+    throw new Error(message || `POST /rollouts: ${res.status}`);
+  }
+  return res.json() as Promise<Rollout>;
 }
 
 export async function fetchModelConfigs(): Promise<ModelConfig[]> {

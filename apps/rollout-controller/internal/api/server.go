@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/JRedCodes/rollout-controller/internal/db"
@@ -18,16 +19,16 @@ import (
 )
 
 type Server struct {
-	pipeline        *PipelineHolder
-	repo            *db.RolloutRepository
-	hub             *SSEHub
-	modelConfigRepo *modelconfig.Repository
-	modelConfigPub  *modelconfig.Seeder
-	tenantRepo      *tenant.Repository
-	tenantPub       *tenant.Seeder
-	adminAPIKey     string
-	featureFlagKey  string
-	httpServer      *http.Server
+	pipeline             *PipelineHolder
+	repo                 *db.RolloutRepository
+	hub                  *SSEHub
+	modelConfigRepo      *modelconfig.Repository
+	modelConfigPub       *modelconfig.Seeder
+	tenantRepo           *tenant.Repository
+	tenantPub            *tenant.Seeder
+	adminAPIKey          string
+	featureFlagKeyPrefix string
+	httpServer           *http.Server
 }
 
 func New(
@@ -40,34 +41,40 @@ func New(
 	tenantRepo *tenant.Repository,
 	tenantPub *tenant.Seeder,
 	adminAPIKey string,
-	featureFlagKey string,
+	featureFlagKeyPrefix string,
 ) *Server {
 	s := &Server{
-		pipeline:        pipeline,
-		repo:            repo,
-		hub:             hub,
-		modelConfigRepo: modelConfigRepo,
-		modelConfigPub:  modelConfigPub,
-		tenantRepo:      tenantRepo,
-		tenantPub:       tenantPub,
-		adminAPIKey:     adminAPIKey,
-		featureFlagKey:  featureFlagKey,
+		pipeline:             pipeline,
+		repo:                 repo,
+		hub:                  hub,
+		modelConfigRepo:      modelConfigRepo,
+		modelConfigPub:       modelConfigPub,
+		tenantRepo:           tenantRepo,
+		tenantPub:            tenantPub,
+		adminAPIKey:          adminAPIKey,
+		featureFlagKeyPrefix: featureFlagKeyPrefix,
 	}
 
+	// Unauthenticated: health check, and tenant bootstrapping (which has no
+	// tenant key to present yet -- it's gated by ADMIN_API_KEY instead).
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /tenants", s.handleCreateTenant)
-	mux.HandleFunc("GET /rollout", s.handleGetRollout)
-	mux.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
-	mux.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)
-	mux.HandleFunc("POST /rollout/rollback", s.handleRollback)
-	mux.HandleFunc("GET /rollouts", s.handleListRollouts)
-	mux.HandleFunc("GET /rollouts/{id}", s.handleGetRolloutByID)
-	mux.HandleFunc("POST /rollouts", s.handleCreateRollout)
-	mux.HandleFunc("GET /models", s.handleListModels)
-	mux.HandleFunc("GET /models/{id}", s.handleGetModel)
-	mux.HandleFunc("PUT /models/{id}", s.handleUpdateModel)
-	mux.Handle("GET /events", hub)
+
+	// Every other route requires a valid tenant API key.
+	authed := http.NewServeMux()
+	authed.HandleFunc("GET /rollout", s.handleGetRollout)
+	authed.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
+	authed.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)
+	authed.HandleFunc("POST /rollout/rollback", s.handleRollback)
+	authed.HandleFunc("GET /rollouts", s.handleListRollouts)
+	authed.HandleFunc("GET /rollouts/{id}", s.handleGetRolloutByID)
+	authed.HandleFunc("POST /rollouts", s.handleCreateRollout)
+	authed.HandleFunc("GET /models", s.handleListModels)
+	authed.HandleFunc("GET /models/{id}", s.handleGetModel)
+	authed.HandleFunc("PUT /models/{id}", s.handleUpdateModel)
+	authed.Handle("GET /events", hub)
+	mux.Handle("/", s.authMiddleware(authed))
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -75,6 +82,43 @@ func New(
 	}
 
 	return s
+}
+
+type contextKey int
+
+const tenantIDContextKey contextKey = iota
+
+// authMiddleware resolves "Authorization: Bearer <key>" to a tenant ID via
+// Postgres (the Go service has direct DB access, unlike the Edge Evaluator,
+// so it doesn't need the Redis tenant-auth cache) and stores it in the
+// request context for handlers to read via tenantIDFromContext.
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if key == "" {
+			http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			return
+		}
+
+		tenantID, err := s.tenantRepo.GetIDByAPIKey(r.Context(), key)
+		if err != nil {
+			if errors.Is(err, tenant.ErrInvalidAPIKey) {
+				http.Error(w, "invalid api key", http.StatusUnauthorized)
+				return
+			}
+			log.Printf("api: auth lookup failed: %v", err)
+			http.Error(w, "authentication failed", http.StatusInternalServerError)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), tenantIDContextKey, tenantID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func tenantIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(tenantIDContextKey).(string)
+	return id
 }
 
 func (s *Server) Run(ctx context.Context) {
@@ -105,8 +149,7 @@ type createTenantRequest struct {
 // handleCreateTenant is the one bootstrapping endpoint gated by a single
 // shared ADMIN_API_KEY rather than a per-tenant key -- there's no tenant
 // key to present yet, since this is what issues the first one. Every other
-// route is gated by the per-tenant auth middleware added in the next
-// commit.
+// route is gated by authMiddleware instead.
 func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
 	presented := r.Header.Get("X-Admin-Key")
 	if subtle.ConstantTimeCompare([]byte(presented), []byte(s.adminAPIKey)) != 1 {
@@ -202,7 +245,7 @@ func (s *Server) handleGetDecisions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
-	profiles, err := s.modelConfigRepo.List(r.Context())
+	profiles, err := s.modelConfigRepo.List(r.Context(), tenantIDFromContext(r.Context()))
 	if err != nil {
 		log.Printf("api: list model configs: %v", err)
 		http.Error(w, "failed to load model configurations", http.StatusInternalServerError)
@@ -217,7 +260,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	profile, err := s.modelConfigRepo.Get(r.Context(), id)
+	profile, err := s.modelConfigRepo.Get(r.Context(), tenantIDFromContext(r.Context()), id)
 	if err != nil {
 		s.writeModelConfigError(w, err)
 		return
@@ -257,7 +300,7 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, err := s.modelConfigRepo.Update(r.Context(), id, *body.FailureRate, *body.MinLatencyMs, *body.MaxLatencyMs)
+	profile, err := s.modelConfigRepo.Update(r.Context(), tenantIDFromContext(r.Context()), id, *body.FailureRate, *body.MinLatencyMs, *body.MaxLatencyMs)
 	if err != nil {
 		s.writeModelConfigError(w, err)
 		return
@@ -297,7 +340,7 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListRollouts(w http.ResponseWriter, r *http.Request) {
-	rollouts, err := s.repo.ListRollouts(r.Context())
+	rollouts, err := s.repo.ListRollouts(r.Context(), tenantIDFromContext(r.Context()))
 	if err != nil {
 		log.Printf("api: list rollouts: %v", err)
 		http.Error(w, "failed to load rollouts", http.StatusInternalServerError)
@@ -312,7 +355,7 @@ func (s *Server) handleListRollouts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetRolloutByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	rollout, err := s.repo.GetRollout(r.Context(), id)
+	rollout, err := s.repo.GetRollout(r.Context(), tenantIDFromContext(r.Context()), id)
 	if err != nil {
 		if notFound, ok := errors.AsType[*db.RolloutNotFoundError](err); ok {
 			http.Error(w, notFound.Error(), http.StatusNotFound)
@@ -337,6 +380,8 @@ type createRolloutRequest struct {
 // most recently COMPLETED rollout's candidate — the "promote candidate to
 // stable, prepare next rollout slot" behavior.
 func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantIDFromContext(r.Context())
+
 	var body createRolloutRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -361,7 +406,7 @@ func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
 		percentage = *body.CandidatePercentage
 	}
 
-	if _, err := s.modelConfigRepo.Get(r.Context(), body.CandidateModelVersionID); err != nil {
+	if _, err := s.modelConfigRepo.Get(r.Context(), tenantID, body.CandidateModelVersionID); err != nil {
 		s.writeModelConfigError(w, err)
 		return
 	}
@@ -370,7 +415,7 @@ func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
 	if body.StableModelVersionID != nil && *body.StableModelVersionID != "" {
 		stableID = *body.StableModelVersionID
 	} else {
-		promoted, err := s.repo.LatestCompletedCandidate(r.Context())
+		promoted, err := s.repo.LatestCompletedCandidate(r.Context(), tenantID)
 		if err != nil {
 			if errors.Is(err, db.ErrNoCompletedRollout) {
 				http.Error(w, "stableModelVersionId is required (no completed rollout to default it from)", http.StatusBadRequest)
@@ -383,17 +428,18 @@ func (s *Server) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
 		stableID = promoted
 	}
 
-	if _, err := s.modelConfigRepo.Get(r.Context(), stableID); err != nil {
+	if _, err := s.modelConfigRepo.Get(r.Context(), tenantID, stableID); err != nil {
 		s.writeModelConfigError(w, err)
 		return
 	}
 
 	rollout, err := s.repo.CreateRollout(r.Context(), db.CreateRolloutInput{
+		TenantID:                tenantID,
 		RolloutPhaseID:          body.RolloutPhaseID,
 		StableModelVersionID:    stableID,
 		CandidateModelVersionID: body.CandidateModelVersionID,
 		CandidatePercentage:     percentage,
-		FeatureFlagKey:          s.featureFlagKey,
+		FeatureFlagKey:          s.featureFlagKeyPrefix + tenantID,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrActiveRolloutExists) {

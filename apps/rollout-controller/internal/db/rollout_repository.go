@@ -38,6 +38,7 @@ type Decision struct {
 // list/get/create endpoints.
 type Rollout struct {
 	ID                      string    `json:"id"`
+	TenantID                string    `json:"tenantId"`
 	RolloutPhaseID          string    `json:"rolloutPhaseId"`
 	StableModelVersionID    string    `json:"stableModelVersionId"`
 	CandidateModelVersionID *string   `json:"candidateModelVersionId"`
@@ -55,11 +56,11 @@ func (e *RolloutNotFoundError) Error() string {
 }
 
 // CreateRolloutInput is the validated input for CreateRollout. Policy
-// thresholds and the feature flag key are deliberately not caller-settable
-// yet — new rollouts inherit the rollouts table's column defaults, and the
-// feature flag key is a system-wide constant the Edge Evaluator is
-// configured to read.
+// thresholds are deliberately not caller-settable yet — new rollouts
+// inherit the rollouts table's column defaults. FeatureFlagKey is computed
+// server-side from the tenant ID, never caller-supplied.
 type CreateRolloutInput struct {
+	TenantID                string
 	RolloutPhaseID          string
 	StableModelVersionID    string
 	CandidateModelVersionID string
@@ -204,14 +205,15 @@ func (r *RolloutRepository) ListDecisions(ctx context.Context, rolloutID string,
 	return decisions, rows.Err()
 }
 
-// ListRollouts returns every rollout, newest first.
-func (r *RolloutRepository) ListRollouts(ctx context.Context) ([]Rollout, error) {
+// ListRollouts returns every rollout belonging to tenantID, newest first.
+func (r *RolloutRepository) ListRollouts(ctx context.Context, tenantID string) ([]Rollout, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, rollout_phase_id, stable_model_version_id,
+		SELECT id, tenant_id, rollout_phase_id, stable_model_version_id,
 			candidate_model_version_id, candidate_percentage, status, created_at
 		FROM rollouts
+		WHERE tenant_id = $1
 		ORDER BY created_at DESC
-	`)
+	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list rollouts: %w", err)
 	}
@@ -220,7 +222,7 @@ func (r *RolloutRepository) ListRollouts(ctx context.Context) ([]Rollout, error)
 	var rollouts []Rollout
 	for rows.Next() {
 		var ro Rollout
-		if err := rows.Scan(&ro.ID, &ro.RolloutPhaseID, &ro.StableModelVersionID,
+		if err := rows.Scan(&ro.ID, &ro.TenantID, &ro.RolloutPhaseID, &ro.StableModelVersionID,
 			&ro.CandidateModelVersionID, &ro.CandidatePercentage, &ro.Status, &ro.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan rollout: %w", err)
 		}
@@ -229,16 +231,17 @@ func (r *RolloutRepository) ListRollouts(ctx context.Context) ([]Rollout, error)
 	return rollouts, rows.Err()
 }
 
-// GetRollout returns a single rollout by ID. Returns *RolloutNotFoundError
-// if it doesn't exist.
-func (r *RolloutRepository) GetRollout(ctx context.Context, id string) (Rollout, error) {
+// GetRollout returns a single rollout by ID, scoped to tenantID so one
+// tenant can never fetch another's rollout by guessing its ID. Returns
+// *RolloutNotFoundError if it doesn't exist (or belongs to another tenant).
+func (r *RolloutRepository) GetRollout(ctx context.Context, tenantID, id string) (Rollout, error) {
 	var ro Rollout
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, rollout_phase_id, stable_model_version_id,
+		SELECT id, tenant_id, rollout_phase_id, stable_model_version_id,
 			candidate_model_version_id, candidate_percentage, status, created_at
 		FROM rollouts
-		WHERE id = $1
-	`, id).Scan(&ro.ID, &ro.RolloutPhaseID, &ro.StableModelVersionID,
+		WHERE id = $1 AND tenant_id = $2
+	`, id, tenantID).Scan(&ro.ID, &ro.TenantID, &ro.RolloutPhaseID, &ro.StableModelVersionID,
 		&ro.CandidateModelVersionID, &ro.CandidatePercentage, &ro.Status, &ro.CreatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -250,18 +253,19 @@ func (r *RolloutRepository) GetRollout(ctx context.Context, id string) (Rollout,
 	return ro, nil
 }
 
-// LatestCompletedCandidate returns the candidate_model_version_id of the
-// most recently COMPLETED rollout — the natural default for a new rollout's
-// stable model version. Returns ErrNoCompletedRollout if none exists.
-func (r *RolloutRepository) LatestCompletedCandidate(ctx context.Context) (string, error) {
+// LatestCompletedCandidate returns the candidate_model_version_id of
+// tenantID's most recently COMPLETED rollout — the natural default for a
+// new rollout's stable model version. Returns ErrNoCompletedRollout if
+// tenantID has none.
+func (r *RolloutRepository) LatestCompletedCandidate(ctx context.Context, tenantID string) (string, error) {
 	var candidateID *string
 	err := r.pool.QueryRow(ctx, `
 		SELECT candidate_model_version_id
 		FROM rollouts
-		WHERE status = 'COMPLETED' AND candidate_model_version_id IS NOT NULL
+		WHERE tenant_id = $1 AND status = 'COMPLETED' AND candidate_model_version_id IS NOT NULL
 		ORDER BY created_at DESC
 		LIMIT 1
-	`).Scan(&candidateID)
+	`, tenantID).Scan(&candidateID)
 
 	if errors.Is(err, pgx.ErrNoRows) || candidateID == nil {
 		return "", ErrNoCompletedRollout
@@ -272,22 +276,22 @@ func (r *RolloutRepository) LatestCompletedCandidate(ctx context.Context) (strin
 	return *candidateID, nil
 }
 
-// CreateRollout inserts a new rollout with status RUNNING. Returns
-// ErrActiveRolloutExists if a RUNNING/HELD rollout already exists (enforced
-// by the rollouts_single_active_idx unique index).
+// CreateRollout inserts a new rollout with status RUNNING for in.TenantID.
+// Returns ErrActiveRolloutExists if that tenant already has a RUNNING/HELD
+// rollout (enforced by rollouts_single_active_per_tenant_idx).
 func (r *RolloutRepository) CreateRollout(ctx context.Context, in CreateRolloutInput) (Rollout, error) {
 	var ro Rollout
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO rollouts (
-			id, rollout_phase_id, stable_model_version_id,
+			id, tenant_id, rollout_phase_id, stable_model_version_id,
 			candidate_model_version_id, candidate_percentage,
 			feature_flag_key, status
-		) VALUES ($1, $2, $3, $4, $5, $6, 'RUNNING')
-		RETURNING id, rollout_phase_id, stable_model_version_id,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, 'RUNNING')
+		RETURNING id, tenant_id, rollout_phase_id, stable_model_version_id,
 			candidate_model_version_id, candidate_percentage, status, created_at
-	`, uuid.NewString(), in.RolloutPhaseID, in.StableModelVersionID,
+	`, uuid.NewString(), in.TenantID, in.RolloutPhaseID, in.StableModelVersionID,
 		in.CandidateModelVersionID, in.CandidatePercentage, in.FeatureFlagKey,
-	).Scan(&ro.ID, &ro.RolloutPhaseID, &ro.StableModelVersionID,
+	).Scan(&ro.ID, &ro.TenantID, &ro.RolloutPhaseID, &ro.StableModelVersionID,
 		&ro.CandidateModelVersionID, &ro.CandidatePercentage, &ro.Status, &ro.CreatedAt)
 
 	if err != nil {

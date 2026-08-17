@@ -130,6 +130,17 @@ export async function createRollout(input: CreateRolloutInput): Promise<Rollout>
   return res.json() as Promise<Rollout>;
 }
 
+export async function regenerateApiKey(): Promise<{ apiKey: string }> {
+  const res = await apiFetch(`/auth/regenerate-key`, { method: "POST" });
+  if (!res.ok) throw new Error(`POST /auth/regenerate-key: ${res.status}`);
+  return res.json() as Promise<{ apiKey: string }>;
+}
+
+export async function signOut(): Promise<void> {
+  const res = await apiFetch(`/auth/signout`, { method: "POST" });
+  if (!res.ok) throw new Error(`POST /auth/signout: ${res.status}`);
+}
+
 export async function fetchModelConfigs(): Promise<ModelConfig[]> {
   const res = await apiFetch(`/models`);
   if (!res.ok) throw new Error(`GET /models: ${res.status}`);

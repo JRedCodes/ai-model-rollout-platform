@@ -7,6 +7,7 @@ import { ModelConfigPanel } from "./ModelConfigPanel.tsx";
 import { SignIn } from "./SignIn.tsx";
 import { SignUp } from "./SignUp.tsx";
 import { AccountPanel } from "./AccountPanel.tsx";
+import { AboutPage } from "./AboutPage.tsx";
 import { useSSE } from "./useSSE.ts";
 import { getApiKey, onApiKeyChange } from "./apiKey.ts";
 import { useSession } from "./useSession.ts";
@@ -33,13 +34,22 @@ function Dashboard() {
             Rollout Platform
           </span>
         </div>
-        <button
-          type="button"
-          onClick={() => navigate("/account")}
-          className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2"
-        >
-          Account
-        </button>
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => navigate("/about")}
+            className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2"
+          >
+            About
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/account")}
+            className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2"
+          >
+            Account
+          </button>
+        </div>
       </header>
       <main className="max-w-5xl mx-auto p-6 space-y-4">
         <StatusPanel />
@@ -77,7 +87,11 @@ export default function App() {
   }
 
   let view: React.ReactNode;
-  if (!hasLegacyKey && session.status === "loading") {
+  if (route === "/about") {
+    // Reachable regardless of auth state, and doesn't wait on the session
+    // check -- a visitor should be able to read this before ever signing in.
+    view = <AboutPage />;
+  } else if (!hasLegacyKey && session.status === "loading") {
     // Avoids flashing the sign-in form for an already-signed-in user while
     // GET /auth/me is still in flight on first load.
     view = <div className="min-h-screen bg-slate-950" />;

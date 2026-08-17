@@ -9,13 +9,17 @@ export class UnauthorizedError extends Error {
   }
 }
 
-// Wraps fetch: attaches the stored tenant API key, and on a 401 clears it
-// (so the App root falls back to the key-entry gate) and throws a typed
-// error instead of letting callers see an opaque failed response.
+// Wraps fetch: prefers a legacy stored API key (Bearer header) when
+// present, otherwise relies on the session cookie (credentials: include)
+// -- authMiddleware tries Bearer first either way, so a stored key always
+// wins if both exist. On a 401, clears any stored key (so the App root
+// falls back to the sign-in view if it was relying on one) and throws a
+// typed error instead of letting callers see an opaque failed response.
 async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const apiKey = getApiKey();
   const res = await fetch(`${BASE}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       ...init.headers,

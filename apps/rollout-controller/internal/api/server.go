@@ -106,19 +106,34 @@ type contextKey int
 
 const tenantIDContextKey contextKey = iota
 
-// authMiddleware resolves "Authorization: Bearer <key>" to a tenant ID and
-// stores it in the request context for handlers to read via
-// tenantIDFromContext.
+// authMiddleware resolves a tenant ID (and, when authentication came from a
+// session rather than a bearer token, a user ID too) and stores them in the
+// request context for handlers to read via tenantIDFromContext /
+// userIDFromContext. Two ways in, tried in order:
+//  1. "Authorization: Bearer <tenant-api-key>" -- the stress-tester, curl,
+//     and any other scripted caller. Resolves a tenant only, no user.
+//  2. The session cookie -- the dashboard, once signed in. Resolves both,
+//     since a session belongs to a user who owns exactly one tenant.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		tenantID, err := s.resolveAPIKey(r.Context(), key)
+		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+
+		var tenantID, userID string
+		var err error
+		if bearer != "" {
+			tenantID, err = s.resolveAPIKey(r.Context(), bearer)
+		} else {
+			tenantID, userID, err = s.resolveSession(r)
+		}
 		if err != nil {
 			writeAuthError(w, err)
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), tenantIDContextKey, tenantID)
+		if userID != "" {
+			ctx = context.WithValue(ctx, userIDContextKey, userID)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -133,15 +148,36 @@ func (s *Server) resolveAPIKey(ctx context.Context, key string) (string, error) 
 	return s.tenantRepo.GetIDByAPIKey(ctx, key)
 }
 
+// resolveSession resolves the session cookie, if present, to the tenant
+// and user it belongs to.
+func (s *Server) resolveSession(r *http.Request) (tenantID, userID string, err error) {
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return "", "", errMissingAPIKey
+	}
+
+	uid, err := s.sessionRepo.UserIDForToken(r.Context(), c.Value)
+	if err != nil {
+		return "", "", err
+	}
+
+	u, err := s.userRepo.GetByID(r.Context(), uid)
+	if err != nil {
+		return "", "", err
+	}
+
+	return u.TenantID, u.ID, nil
+}
+
 var errMissingAPIKey = errors.New("missing api key")
 
 func writeAuthError(w http.ResponseWriter, err error) {
 	if errors.Is(err, errMissingAPIKey) {
-		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		http.Error(w, "missing bearer token or session", http.StatusUnauthorized)
 		return
 	}
-	if errors.Is(err, tenant.ErrInvalidAPIKey) {
-		http.Error(w, "invalid api key", http.StatusUnauthorized)
+	if errors.Is(err, tenant.ErrInvalidAPIKey) || errors.Is(err, auth.ErrInvalidSession) || errors.Is(err, auth.ErrUserNotFound) {
+		http.Error(w, "invalid or expired credentials", http.StatusUnauthorized)
 		return
 	}
 	log.Printf("api: auth lookup failed: %v", err)

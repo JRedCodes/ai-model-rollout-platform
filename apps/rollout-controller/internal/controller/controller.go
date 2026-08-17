@@ -11,17 +11,29 @@ import (
 	"github.com/JRedCodes/rollout-controller/internal/writer"
 )
 
+// StateReader is the subset of *writer.Writer's behavior the controller
+// reads from -- extracted so evaluate()'s decision logic can be
+// unit-tested against a fake instead of a real Redis/Postgres-backed
+// Writer. *writer.Writer satisfies this already; nothing else needs to
+// change at call sites.
+type StateReader interface {
+	IsHeld() bool
+	IsRolledBack() bool
+}
+
 type Controller struct {
-	policy config.RolloutPolicy
-	store  *metrics.Store
-	w      *writer.Writer
+	policy   config.RolloutPolicy
+	store    *metrics.Store
+	state    StateReader
+	commands chan<- writer.Command
 }
 
 func New(policy config.RolloutPolicy, store *metrics.Store, w *writer.Writer) *Controller {
 	return &Controller{
-		policy: policy,
-		store:  store,
-		w:      w,
+		policy:   policy,
+		store:    store,
+		state:    w,
+		commands: w.Commands,
 	}
 }
 
@@ -47,7 +59,7 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 func (c *Controller) evaluate() {
-	if c.w.IsRolledBack() {
+	if c.state.IsRolledBack() {
 		log.Printf("controller: rollout is rolled back — skipping evaluation")
 		return
 	}
@@ -66,7 +78,7 @@ func (c *Controller) evaluate() {
 	log.Printf("controller: window stats — %d reqs, %.1f%% errors, P95 %dms",
 		len(window), errorRate*100, p95)
 
-	if held := c.w.IsHeld(); held {
+	if held := c.state.IsHeld(); held {
 		if !healthy {
 			log.Printf("controller: still held — error rate %.1f%%, P95 %dms remain outside thresholds",
 				errorRate*100, p95)
@@ -74,7 +86,7 @@ func (c *Controller) evaluate() {
 		}
 		log.Printf("controller: window recovered — error rate %.1f%%, P95 %dms — resuming (not advancing yet)",
 			errorRate*100, p95)
-		c.w.Commands <- writer.Command{
+		c.commands <- writer.Command{
 			Type: writer.CmdResume,
 			Reason: fmt.Sprintf("error rate %.1f%%, P95 %dms recovered within thresholds",
 				errorRate*100, p95),
@@ -85,7 +97,7 @@ func (c *Controller) evaluate() {
 	if errorRate > c.policy.AdvanceMaxErrorRate {
 		log.Printf("controller: error rate %.1f%% > %.1f%% advance threshold — holding",
 			errorRate*100, c.policy.AdvanceMaxErrorRate*100)
-		c.w.Commands <- writer.Command{
+		c.commands <- writer.Command{
 			Type: writer.CmdHold,
 			Reason: fmt.Sprintf("error rate %.1f%% exceeded advance threshold %.1f%%",
 				errorRate*100, c.policy.AdvanceMaxErrorRate*100),
@@ -95,7 +107,7 @@ func (c *Controller) evaluate() {
 
 	if p95 > c.policy.AdvanceMaxP95LatencyMs {
 		log.Printf("controller: P95 latency %dms > %dms threshold — holding", p95, c.policy.AdvanceMaxP95LatencyMs)
-		c.w.Commands <- writer.Command{
+		c.commands <- writer.Command{
 			Type: writer.CmdHold,
 			Reason: fmt.Sprintf("P95 latency %dms exceeded threshold %dms",
 				p95, c.policy.AdvanceMaxP95LatencyMs),
@@ -104,7 +116,7 @@ func (c *Controller) evaluate() {
 	}
 
 	log.Printf("controller: healthy — error rate %.1f%%, P95 %dms — advancing", errorRate*100, p95)
-	c.w.Commands <- writer.Command{
+	c.commands <- writer.Command{
 		Type:   writer.CmdAdvance,
 		Reason: fmt.Sprintf("error rate %.1f%%, P95 %dms — within thresholds", errorRate*100, p95),
 	}

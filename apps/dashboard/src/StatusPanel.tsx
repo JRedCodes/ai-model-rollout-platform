@@ -105,7 +105,9 @@ export function StatusPanel() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Rollout</p>
-          <p className="font-mono text-sm text-slate-300">{data.rolloutId}</p>
+          <p data-testid="status-rollout-id" className="font-mono text-sm text-slate-300">
+            {data.rolloutId}
+          </p>
         </div>
         <StatusBadge held={data.held} />
       </div>
@@ -113,17 +115,24 @@ export function StatusPanel() {
       <div className="grid grid-cols-2 gap-4 text-sm">
         <div>
           <p className="text-xs text-slate-500 mb-1">Stable</p>
-          <p className="font-mono text-slate-300">{data.stableModelVersionId}</p>
+          <p data-testid="status-stable-model" className="font-mono text-slate-300">
+            {data.stableModelVersionId}
+          </p>
         </div>
         <div>
           <p className="text-xs text-slate-500 mb-1">Candidate</p>
-          <p className="font-mono text-slate-300">{data.candidateModelVersionId || "—"}</p>
+          <p data-testid="status-candidate-model" className="font-mono text-slate-300">
+            {data.candidateModelVersionId || "—"}
+          </p>
         </div>
       </div>
 
       <div>
         <p className="text-xs text-slate-500 mb-1">Candidate traffic</p>
-        <p className="text-4xl font-semibold tabular-nums text-slate-100">
+        <p
+          data-testid="status-candidate-percentage"
+          className="text-4xl font-semibold tabular-nums text-slate-100"
+        >
           {data.candidatePercentage}
           <span className="text-xl text-slate-500">%</span>
         </p>

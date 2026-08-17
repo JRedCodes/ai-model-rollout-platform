@@ -1,0 +1,111 @@
+name: Stress Tester Smoke
+
+# Deliberately not on push/pull_request -- Playwright (ci.yml) covers UI/
+# user-journey correctness; this exercises guard/controller *timing*
+# behavior under real load, a different concern the stress-tester CLI
+# already owns. burst mode (200 RPS x 30s) rather than steady (10 min) to
+# keep this fast; scheduled + manually triggerable, never a blocking
+# per-PR gate.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  burst-smoke:
+    name: Stress tester burst smoke run
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://jakeredding@localhost:5432/rollout_platform
+      REDIS_URL: redis://localhost:6379
+      DEMO_API_KEY: tk_demo_2218a6e29efe8f4b3378390b46a0710d
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: apps/rollout-controller/go.sum
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TS workspaces
+        run: npm run build
+
+      - name: Start Postgres + Redis
+        run: docker compose up -d --wait postgres redis
+
+      - name: Start model-service
+        run: |
+          nohup node apps/model-service/dist/server.js > model-service.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4001/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "model-service did not become healthy in time" >&2
+          cat model-service.log
+          exit 1
+
+      - name: Start edge-evaluator
+        run: |
+          nohup node apps/edge-evaluator/dist/server.js > edge-evaluator.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4002/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "edge-evaluator did not become healthy in time" >&2
+          cat edge-evaluator.log
+          exit 1
+
+      - name: Build and start rollout-controller
+        working-directory: apps/rollout-controller
+        run: |
+          go build -o rollout-controller .
+          nohup ./rollout-controller > ../../rollout-controller.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4003/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "rollout-controller did not become healthy in time" >&2
+          cat ../../rollout-controller.log
+          exit 1
+
+      # Sets the scenario up directly at its target state (100% candidate,
+      # model-v2 at 35% failure) rather than creating at the normal 10%
+      # default + `--reset` -- the stress-tester's own --reset flag updates
+      # an already-active rollout's row via SQL, which the supervisor's
+      # change detection doesn't see without a controller restart (its own
+      # README documents this). Creating at the right state from the start
+      # avoids needing that restart entirely on a fresh CI run. Verified
+      # this exact sequence locally against a live stack before writing it
+      # here -- guard correctly HELD at 100% within seconds.
+      - name: Set up the demo tenant's burst scenario
+        run: |
+          curl -sf -X POST http://localhost:4003/rollouts \
+            -H "Authorization: Bearer $DEMO_API_KEY" -H "Content-Type: application/json" \
+            -d '{"rolloutPhaseId":"stress-smoke","stableModelVersionId":"model-v1","candidateModelVersionId":"model-v2","candidatePercentage":100}'
+          curl -sf -X PUT http://localhost:4003/models/model-v2 \
+            -H "Authorization: Bearer $DEMO_API_KEY" -H "Content-Type: application/json" \
+            -d '{"failureRate":0.35,"minLatencyMs":50,"maxLatencyMs":200}'
+          sleep 6 # let the supervisor's ~5s reconcile tick pick up the new rollout
+
+      - name: Run stress-tester burst scenario
+        working-directory: apps/stress-tester
+        run: npm run burst -- --apiKey="$DEMO_API_KEY"
+
+      - name: Show service logs
+        if: always()
+        run: |
+          echo "--- model-service ---"; cat model-service.log || true
+          echo "--- edge-evaluator ---"; cat edge-evaluator.log || true
+          echo "--- rollout-controller ---"; cat rollout-controller.log || true
+
+      - name: Tear down Postgres + Redis
+        if: always()
+        run: docker compose down

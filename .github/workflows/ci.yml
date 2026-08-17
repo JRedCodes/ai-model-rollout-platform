@@ -112,3 +112,98 @@ jobs:
       - name: Tear down Postgres + Redis
         if: always()
         run: docker compose down
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://jakeredding@localhost:5432/rollout_platform
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: apps/rollout-controller/go.sum
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: apps/dashboard
+        run: npx playwright install --with-deps chromium
+
+      - name: Build TS workspaces
+        run: npm run build
+
+      - name: Start Postgres + Redis
+        run: docker compose up -d --wait postgres redis
+
+      - name: Start model-service
+        run: |
+          nohup node apps/model-service/dist/server.js > model-service.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4001/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "model-service did not become healthy in time" >&2
+          cat model-service.log
+          exit 1
+
+      - name: Start edge-evaluator
+        run: |
+          nohup node apps/edge-evaluator/dist/server.js > edge-evaluator.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4002/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "edge-evaluator did not become healthy in time" >&2
+          cat edge-evaluator.log
+          exit 1
+
+      - name: Build and start rollout-controller
+        working-directory: apps/rollout-controller
+        run: |
+          go build -o rollout-controller .
+          nohup ./rollout-controller > ../../rollout-controller.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4003/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "rollout-controller did not become healthy in time" >&2
+          cat ../../rollout-controller.log
+          exit 1
+
+      - name: Start dashboard
+        working-directory: apps/dashboard
+        run: |
+          nohup npm run dev > ../../dashboard.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5173 > /dev/null && exit 0
+            sleep 1
+          done
+          echo "dashboard did not become healthy in time" >&2
+          cat ../../dashboard.log
+          exit 1
+
+      - name: Run Playwright tests
+        working-directory: apps/dashboard
+        run: npx playwright test
+
+      - name: Show service logs
+        if: always()
+        run: |
+          echo "--- model-service ---"; cat model-service.log || true
+          echo "--- edge-evaluator ---"; cat edge-evaluator.log || true
+          echo "--- rollout-controller ---"; cat rollout-controller.log || true
+          echo "--- dashboard ---"; cat dashboard.log || true
+
+      - name: Tear down Postgres + Redis
+        if: always()
+        run: docker compose down

@@ -2,12 +2,10 @@ package tenant
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 
+	"github.com/JRedCodes/rollout-controller/internal/token"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -129,14 +127,13 @@ func (r *Repository) GetIDByAPIKey(ctx context.Context, plaintextKey string) (st
 }
 
 func hashAPIKey(plaintextKey string) string {
-	sum := sha256.Sum256([]byte(plaintextKey))
-	return hex.EncodeToString(sum[:])
+	return token.Hash(plaintextKey)
 }
 
 func generateAPIKey() (string, error) {
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
+	raw, err := token.Generate()
+	if err != nil {
 		return "", err
 	}
-	return "tk_" + hex.EncodeToString(raw), nil
+	return "tk_" + raw, nil
 }

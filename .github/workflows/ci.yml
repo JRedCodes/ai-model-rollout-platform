@@ -28,6 +28,33 @@ jobs:
       - name: Unit tests (edge-evaluator)
         run: npm test --workspace @rollout-platform/edge-evaluator
 
+      - name: Start Redis
+        run: docker compose up -d --wait redis
+
+      - name: Start model-service
+        run: |
+          nohup node apps/model-service/dist/server.js > model-service.log 2>&1 &
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:4001/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "model-service did not become healthy in time" >&2
+          cat model-service.log
+          exit 1
+
+      - name: Integration tests (edge-evaluator)
+        run: npm run test:integration --workspace @rollout-platform/edge-evaluator
+
+      - name: Show model-service log
+        if: always()
+        run: cat model-service.log || true
+
+      - name: Tear down Redis
+        if: always()
+        run: docker compose down
+
   go:
     name: Go (build, vet)
     runs-on: ubuntu-latest

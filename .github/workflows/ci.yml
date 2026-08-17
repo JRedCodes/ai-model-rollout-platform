@@ -7,7 +7,7 @@ on:
 
 jobs:
   node:
-    name: Node (typecheck, build, edge-evaluator unit tests)
+    name: Node (typecheck, build, unit tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +28,15 @@ jobs:
 
       - name: Unit tests (edge-evaluator)
         run: npm test --workspace @rollout-platform/edge-evaluator
+
+      - name: Unit tests (model-service)
+        run: npm test --workspace @rollout-platform/model-service
+
+      - name: Unit tests (contracts)
+        run: npm test --workspace @rollout-platform/contracts
+
+      - name: Unit tests (dashboard)
+        run: npm test --workspace @rollout-platform/dashboard
 
       - name: Start Redis
         run: docker compose up -d --wait redis

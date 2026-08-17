@@ -78,6 +78,7 @@ function ModelConfigRow({ config }: { config: ModelConfig }) {
           step="0.01"
           value={draft.failureRatePct}
           onChange={(e) => setDraft((d) => ({ ...d, failureRatePct: e.target.value }))}
+          data-testid={`model-config-failure-rate-${config.modelVersionId}`}
           className={`w-24 ${inputClass}`}
         />
       </label>
@@ -90,6 +91,7 @@ function ModelConfigRow({ config }: { config: ModelConfig }) {
             min={1}
             value={draft.minLatencyMs}
             onChange={(e) => setDraft((d) => ({ ...d, minLatencyMs: e.target.value }))}
+            data-testid={`model-config-min-latency-${config.modelVersionId}`}
             className={`w-16 ${inputClass}`}
           />
           <span className="text-slate-600">–</span>
@@ -98,6 +100,7 @@ function ModelConfigRow({ config }: { config: ModelConfig }) {
             min={1}
             value={draft.maxLatencyMs}
             onChange={(e) => setDraft((d) => ({ ...d, maxLatencyMs: e.target.value }))}
+            data-testid={`model-config-max-latency-${config.modelVersionId}`}
             className={`w-16 ${inputClass}`}
           />
         </div>
@@ -106,6 +109,7 @@ function ModelConfigRow({ config }: { config: ModelConfig }) {
       <button
         onClick={() => mutation.mutate()}
         disabled={!isDirty || !isValid || mutation.isPending}
+        data-testid={`model-config-save-${config.modelVersionId}`}
         className="text-xs font-medium rounded-md px-3 py-1.5 bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         {mutation.isPending ? "Saving…" : "Save"}

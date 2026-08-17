@@ -87,3 +87,28 @@ jobs:
 
       - name: Test
         run: go test ./... -race -cover
+
+  go-integration:
+    name: Go (integration tests)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://jakeredding@localhost:5432/rollout_platform
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: apps/rollout-controller/go.sum
+
+      - name: Start Postgres + Redis
+        run: docker compose up -d --wait postgres redis
+
+      - name: Integration tests
+        working-directory: apps/rollout-controller
+        run: go test -tags=integration ./... -race
+
+      - name: Tear down Postgres + Redis
+        if: always()
+        run: docker compose down

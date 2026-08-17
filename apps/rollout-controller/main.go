@@ -37,6 +37,7 @@ func main() {
 	migrationsPath := envOr("MIGRATIONS_PATH", "./migrations")
 	featureFlagKeyPrefix := envOr("FEATURE_FLAG_KEY_PREFIX", "feature-flag:model-routing:")
 	adminAPIKey := envOr("ADMIN_API_KEY", "dev-admin-key")
+	allowedOrigins := splitTrimmed(envOr("ALLOWED_ORIGINS", "http://localhost:5173"), ",")
 
 	// golang-migrate's pgx/v5 driver uses the "pgx5" scheme.
 	migrateURL := "pgx5://" + strings.TrimPrefix(pgURL, "postgres://")
@@ -88,7 +89,7 @@ func main() {
 	userRepo := auth.NewUserRepository(pool, tenantRepo)
 	sessionRepo := auth.NewSessionRepository(pool)
 
-	srv := api.New(4003, pipelines, repo, hubs, modelConfigRepo, modelConfigSeeder, tenantRepo, tenantSeeder, userRepo, sessionRepo, adminAPIKey, featureFlagKeyPrefix)
+	srv := api.New(4003, pipelines, repo, hubs, modelConfigRepo, modelConfigSeeder, tenantRepo, tenantSeeder, userRepo, sessionRepo, adminAPIKey, featureFlagKeyPrefix, allowedOrigins)
 
 	// These four run for the life of the process, independent of which
 	// tenants (if any) currently have an active rollout.
@@ -274,4 +275,14 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitTrimmed splits s on sep and trims whitespace from each part -- used
+// for comma-separated env vars, where "a, b" and "a,b" should behave the same.
+func splitTrimmed(s, sep string) []string {
+	parts := strings.Split(s, sep)
+	for i, p := range parts {
+		parts[i] = strings.TrimSpace(p)
+	}
+	return parts
 }

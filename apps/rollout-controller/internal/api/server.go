@@ -47,6 +47,7 @@ func New(
 	sessionRepo *auth.SessionRepository,
 	adminAPIKey string,
 	featureFlagKeyPrefix string,
+	allowedOrigins []string,
 ) *Server {
 	s := &Server{
 		pipelines:            pipelines,
@@ -96,7 +97,7 @@ func New(
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: corsMiddleware(mux),
+		Handler: newCORSMiddleware(allowedOrigins)(mux),
 	}
 
 	return s
@@ -550,15 +551,33 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// newCORSMiddleware only echoes back an allowlisted Origin (plus
+// Access-Control-Allow-Credentials) instead of "*" -- required for the
+// session cookie: browsers refuse credentialed cross-origin requests
+// against a wildcard origin. Origins not on the list get no CORS headers
+// at all, same as a same-origin request would need none.
+func newCORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[o] = struct{}{}
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				if _, ok := allowed[origin]; ok {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+					w.Header().Set("Vary", "Origin")
+				}
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

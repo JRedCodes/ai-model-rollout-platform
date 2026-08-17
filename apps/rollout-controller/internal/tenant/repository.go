@@ -44,21 +44,38 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 // Create inserts a new tenant with a freshly generated API key, and seeds
-// its default model catalog in the same transaction. The plaintext key is
-// returned exactly once here — only its hash is ever persisted.
+// its default model catalog, all in one new transaction. The plaintext key
+// is returned exactly once here — only its hash is ever persisted.
 func (r *Repository) Create(ctx context.Context, name string) (Tenant, string, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Tenant{}, "", fmt.Errorf("begin create tenant tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	t, plaintextKey, err := r.CreateTx(ctx, tx, name)
+	if err != nil {
+		return Tenant{}, "", err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Tenant{}, "", fmt.Errorf("commit create tenant tx: %w", err)
+	}
+
+	return t, plaintextKey, nil
+}
+
+// CreateTx is Create's logic run inside a caller-supplied transaction
+// instead of one of its own, for callers that need tenant creation to be
+// atomic with other inserts -- e.g. auth.UserRepository creating a tenant
+// and the user that owns it together.
+func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, name string) (Tenant, string, error) {
 	id := uuid.NewString()
 
 	plaintextKey, err := generateAPIKey()
 	if err != nil {
 		return Tenant{}, "", fmt.Errorf("generate api key: %w", err)
 	}
-
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return Tenant{}, "", fmt.Errorf("begin create tenant tx: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO tenants (id, name, api_key_hash) VALUES ($1, $2, $3)
@@ -73,10 +90,6 @@ func (r *Repository) Create(ctx context.Context, name string) (Tenant, string, e
 		`, id, mc.modelVersionID, mc.failureRate, mc.minLatencyMs, mc.maxLatencyMs); err != nil {
 			return Tenant{}, "", fmt.Errorf("seed default model config %s: %w", mc.modelVersionID, err)
 		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return Tenant{}, "", fmt.Errorf("commit create tenant tx: %w", err)
 	}
 
 	return Tenant{ID: id, Name: name}, plaintextKey, nil

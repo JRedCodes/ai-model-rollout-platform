@@ -38,6 +38,7 @@ func main() {
 	featureFlagKeyPrefix := envOr("FEATURE_FLAG_KEY_PREFIX", "feature-flag:model-routing:")
 	adminAPIKey := envOr("ADMIN_API_KEY", "dev-admin-key")
 	allowedOrigins := splitTrimmed(envOr("ALLOWED_ORIGINS", "http://localhost:5173"), ",")
+	cookieSecure := envOr("COOKIE_SECURE", "false") == "true"
 
 	// golang-migrate's pgx/v5 driver uses the "pgx5" scheme.
 	migrateURL := "pgx5://" + strings.TrimPrefix(pgURL, "postgres://")
@@ -89,7 +90,7 @@ func main() {
 	userRepo := auth.NewUserRepository(pool, tenantRepo)
 	sessionRepo := auth.NewSessionRepository(pool)
 
-	srv := api.New(4003, pipelines, repo, hubs, modelConfigRepo, modelConfigSeeder, tenantRepo, tenantSeeder, userRepo, sessionRepo, adminAPIKey, featureFlagKeyPrefix, allowedOrigins)
+	srv := api.New(4003, pipelines, repo, hubs, modelConfigRepo, modelConfigSeeder, tenantRepo, tenantSeeder, userRepo, sessionRepo, adminAPIKey, featureFlagKeyPrefix, allowedOrigins, cookieSecure)
 
 	// These four run for the life of the process, independent of which
 	// tenants (if any) currently have an active rollout.

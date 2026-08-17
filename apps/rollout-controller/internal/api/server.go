@@ -31,6 +31,7 @@ type Server struct {
 	sessionRepo          *auth.SessionRepository
 	adminAPIKey          string
 	featureFlagKeyPrefix string
+	cookieSecure         bool
 	httpServer           *http.Server
 }
 
@@ -48,6 +49,7 @@ func New(
 	adminAPIKey string,
 	featureFlagKeyPrefix string,
 	allowedOrigins []string,
+	cookieSecure bool,
 ) *Server {
 	s := &Server{
 		pipelines:            pipelines,
@@ -61,6 +63,7 @@ func New(
 		sessionRepo:          sessionRepo,
 		adminAPIKey:          adminAPIKey,
 		featureFlagKeyPrefix: featureFlagKeyPrefix,
+		cookieSecure:         cookieSecure,
 	}
 
 	// Unauthenticated: health check, tenant bootstrapping (gated by

@@ -166,29 +166,37 @@ func (s *Server) startSession(w http.ResponseWriter, ctx context.Context, userID
 		return err
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    plaintext,
-		Path:     "/",
-		MaxAge:   int(auth.SessionDuration.Seconds()),
-		HttpOnly: true,
-		// SameSite=Lax means fetch()/XHR from another origin never attaches
-		// this cookie, which is the CSRF mitigation for the mutating
-		// endpoints below -- no separate CSRF token needed for a same-site
-		// SPA. Revisit if the dashboard and API ever need SameSite=None
-		// for a cross-origin deployment (see COOKIE_SECURE).
-		SameSite: http.SameSiteLaxMode,
-	})
+	cookie := s.sessionCookie(plaintext, int(auth.SessionDuration.Seconds()))
+	http.SetCookie(w, &cookie)
 	return nil
 }
 
 func (s *Server) clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
+	cookie := s.sessionCookie("", -1)
+	http.SetCookie(w, &cookie)
+}
+
+// sessionCookie builds the session cookie, with Secure/SameSite driven by
+// cookieSecure (COOKIE_SECURE env). Locally (false) that's Lax without
+// Secure -- fetch()/XHR from another origin never attaches a Lax cookie,
+// which is the CSRF mitigation for the mutating endpoints, no separate
+// token needed for a same-site SPA. In a cross-origin deployment (true,
+// e.g. CloudFront dashboard + ALB API per DEPLOYMENT.md) SameSite=None is
+// required for the cookie to be sent cross-site at all, and browsers only
+// honor SameSite=None when Secure is also set.
+func (s *Server) sessionCookie(value string, maxAgeSeconds int) http.Cookie {
+	sameSite := http.SameSiteLaxMode
+	if s.cookieSecure {
+		sameSite = http.SameSiteNoneMode
+	}
+
+	return http.Cookie{
 		Name:     sessionCookieName,
-		Value:    "",
+		Value:    value,
 		Path:     "/",
-		MaxAge:   -1,
+		MaxAge:   maxAgeSeconds,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+		Secure:   s.cookieSecure,
+		SameSite: sameSite,
+	}
 }

@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 // A handful of views doesn't justify a router dependency -- this is just
 // the History API plus a popstate listener, mirroring apiKey.ts's
 // window-event pattern for cross-component state.
-export type Route = "/" | "/signin" | "/signup" | "/account";
+export type Route = "/" | "/signin" | "/signup" | "/account" | "/about";
 
-const VALID_ROUTES: readonly Route[] = ["/", "/signin", "/signup", "/account"];
+const VALID_ROUTES: readonly Route[] = ["/", "/signin", "/signup", "/account", "/about"];
 
 function currentRoute(): Route {
   const path = window.location.pathname;

@@ -99,7 +99,14 @@ export function SignUp({ onAuthenticated }: { onAuthenticated: () => void }) {
             Rollout Platform
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            Create an account to get a tenant and an API key.
+            Create an account to get a tenant and an API key.{" "}
+            <button
+              type="button"
+              onClick={() => navigate("/about")}
+              className="underline underline-offset-2 hover:text-slate-300"
+            >
+              What is this?
+            </button>
           </p>
         </div>
 

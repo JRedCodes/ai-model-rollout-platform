@@ -47,7 +47,16 @@ export function SignIn({ onAuthenticated }: { onAuthenticated: () => void }) {
           <p className="text-sm font-semibold tracking-widest uppercase text-slate-400">
             Rollout Platform
           </p>
-          <p className="text-xs text-slate-500 mt-1">Sign in to continue.</p>
+          <p className="text-xs text-slate-500 mt-1">
+            Sign in to continue.{" "}
+            <button
+              type="button"
+              onClick={() => navigate("/about")}
+              className="underline underline-offset-2 hover:text-slate-300"
+            >
+              What is this?
+            </button>
+          </p>
         </div>
 
         <input

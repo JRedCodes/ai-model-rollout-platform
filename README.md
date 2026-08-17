@@ -76,7 +76,7 @@ Built as an incremental engineering project — each subsystem developed and ver
 
 Real-time control panel for monitoring and operating a live rollout.
 
-- **API key gate** — the app renders nothing until a tenant API key is entered; it's persisted to `localStorage` and attached to every request, and a `401` anywhere clears it and falls back to the gate automatically
+- **Sign-up / sign-in gate** — the app renders nothing until you're authenticated: create an account (issues a tenant + a one-time-shown API key) or sign in, backed by an httpOnly session cookie. A legacy "use an existing API key" path still exists for scripted/demo use (e.g. the seeded demo tenant below) — that key is persisted to `localStorage` and attached as a Bearer token, and a `401` anywhere clears it and falls back to the gate automatically
 - **Status panel** — rollout ID, RUNNING/HELD badge, stable and candidate model versions, current candidate traffic percentage, 5-step advancement ladder
 - **Metrics panel** — 2-minute window error rate (color-coded against advance/hold/rollback thresholds), P95 latency, window request count, total lifetime requests
 - **Decision feed** — last 50 decisions from Postgres with ADVANCE/HOLD/RESUME/ROLLBACK/COMPLETE badges, reason, source, and timestamp

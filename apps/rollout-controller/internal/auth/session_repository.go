@@ -15,9 +15,10 @@ import (
 // any non-expired session.
 var ErrInvalidSession = errors.New("invalid or expired session")
 
-// sessionDuration is how long a session stays valid before its owner has
-// to sign in again.
-const sessionDuration = 30 * 24 * time.Hour
+// SessionDuration is how long a session stays valid before its owner has
+// to sign in again -- also used by the API layer as the session cookie's
+// MaxAge, so the two stay in sync.
+const SessionDuration = 30 * 24 * time.Hour
 
 type SessionRepository struct {
 	pool *pgxpool.Pool
@@ -37,7 +38,7 @@ func (r *SessionRepository) Create(ctx context.Context, userID string) (string, 
 
 	if _, err := r.pool.Exec(ctx, `
 		INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)
-	`, token.Hash(plaintext), userID, time.Now().Add(sessionDuration)); err != nil {
+	`, token.Hash(plaintext), userID, time.Now().Add(SessionDuration)); err != nil {
 		return "", fmt.Errorf("insert session: %w", err)
 	}
 

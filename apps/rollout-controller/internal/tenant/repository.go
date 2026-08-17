@@ -95,6 +95,25 @@ func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, name string) (Tena
 	return Tenant{ID: id, Name: name}, plaintextKey, nil
 }
 
+// RegenerateAPIKey replaces a tenant's API key with a freshly generated
+// one -- the old key stops working immediately, since lookups only ever
+// match the current hash. Returns the new plaintext key, shown here
+// exactly once, same invariant as Create.
+func (r *Repository) RegenerateAPIKey(ctx context.Context, tenantID string) (string, error) {
+	plaintextKey, err := generateAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("generate api key: %w", err)
+	}
+
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE tenants SET api_key_hash = $1 WHERE id = $2
+	`, hashAPIKey(plaintextKey), tenantID); err != nil {
+		return "", fmt.Errorf("update api key: %w", err)
+	}
+
+	return plaintextKey, nil
+}
+
 // AuthEntry is a tenant's ID paired with its API key hash, for the Seeder
 // to publish to Redis. Only the hash is ever read back — the plaintext key
 // is never stored anywhere after Create returns it.

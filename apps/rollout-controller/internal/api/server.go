@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JRedCodes/rollout-controller/internal/auth"
 	"github.com/JRedCodes/rollout-controller/internal/db"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
 	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
@@ -26,6 +27,8 @@ type Server struct {
 	modelConfigPub       *modelconfig.Seeder
 	tenantRepo           *tenant.Repository
 	tenantPub            *tenant.Seeder
+	userRepo             *auth.UserRepository
+	sessionRepo          *auth.SessionRepository
 	adminAPIKey          string
 	featureFlagKeyPrefix string
 	httpServer           *http.Server
@@ -40,6 +43,8 @@ func New(
 	modelConfigPub *modelconfig.Seeder,
 	tenantRepo *tenant.Repository,
 	tenantPub *tenant.Seeder,
+	userRepo *auth.UserRepository,
+	sessionRepo *auth.SessionRepository,
 	adminAPIKey string,
 	featureFlagKeyPrefix string,
 ) *Server {
@@ -51,21 +56,32 @@ func New(
 		modelConfigPub:       modelConfigPub,
 		tenantRepo:           tenantRepo,
 		tenantPub:            tenantPub,
+		userRepo:             userRepo,
+		sessionRepo:          sessionRepo,
 		adminAPIKey:          adminAPIKey,
 		featureFlagKeyPrefix: featureFlagKeyPrefix,
 	}
 
 	// Unauthenticated: health check, tenant bootstrapping (gated by
-	// ADMIN_API_KEY instead), and SSE -- browsers' EventSource can't send
-	// custom headers at all, so it authenticates itself via a query param
-	// instead of going through authMiddleware. See handleEvents.
+	// ADMIN_API_KEY instead), sign-up/sign-in/sign-out (there's no
+	// session yet -- signing in is what creates one), and SSE --
+	// browsers' EventSource can't send custom headers at all, so it
+	// authenticates itself via a query param instead of going through
+	// authMiddleware. See handleEvents.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /tenants", s.handleCreateTenant)
+	mux.HandleFunc("POST /auth/signup", s.handleSignUp)
+	mux.HandleFunc("POST /auth/signin", s.handleSignIn)
+	mux.HandleFunc("POST /auth/signout", s.handleSignOut)
 	mux.HandleFunc("GET /events", s.handleEvents)
 
-	// Every other route requires a valid tenant API key via the Authorization header.
+	// Every other route requires a valid tenant API key via the
+	// Authorization header, or (auth/me, regenerate-key, and eventually
+	// the dashboard's own calls) a session cookie -- see authMiddleware.
 	authed := http.NewServeMux()
+	authed.HandleFunc("GET /auth/me", s.handleMe)
+	authed.HandleFunc("POST /auth/regenerate-key", s.handleRegenerateKey)
 	authed.HandleFunc("GET /rollout", s.handleGetRollout)
 	authed.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
 	authed.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)

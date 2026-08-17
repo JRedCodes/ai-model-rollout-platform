@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/JRedCodes/rollout-controller/internal/api"
+	"github.com/JRedCodes/rollout-controller/internal/auth"
 	"github.com/JRedCodes/rollout-controller/internal/batchlogger"
 	"github.com/JRedCodes/rollout-controller/internal/config"
 	"github.com/JRedCodes/rollout-controller/internal/controller"
@@ -84,7 +85,10 @@ func main() {
 	}
 	log.Printf("redis tenant auth seeded")
 
-	srv := api.New(4003, pipelines, repo, hubs, modelConfigRepo, modelConfigSeeder, tenantRepo, tenantSeeder, adminAPIKey, featureFlagKeyPrefix)
+	userRepo := auth.NewUserRepository(pool, tenantRepo)
+	sessionRepo := auth.NewSessionRepository(pool)
+
+	srv := api.New(4003, pipelines, repo, hubs, modelConfigRepo, modelConfigSeeder, tenantRepo, tenantSeeder, userRepo, sessionRepo, adminAPIKey, featureFlagKeyPrefix)
 
 	// These four run for the life of the process, independent of which
 	// tenants (if any) currently have an active rollout.

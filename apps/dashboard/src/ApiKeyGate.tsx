@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { setApiKey } from "./apiKey.ts";
 
-export function ApiKeyGate() {
+// The original entry point, now a fallback reachable from SignIn's "use an
+// existing API key" link -- still how the README's seeded demo tenant key
+// gets used, and a zero-friction option for visitors who don't want to
+// create an account.
+export function ApiKeyGate({ onBack }: { onBack?: () => void }) {
   const [draft, setDraft] = useState("");
 
   return (
@@ -43,6 +47,16 @@ export function ApiKeyGate() {
           Keys are issued via <code className="text-slate-500">POST /tenants</code>{" "}
           (admin-gated) and stored only in this browser.
         </p>
+
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2"
+          >
+            Back to sign in
+          </button>
+        )}
       </form>
     </div>
   );

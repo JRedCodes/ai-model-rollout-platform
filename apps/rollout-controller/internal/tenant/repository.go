@@ -2,12 +2,10 @@ package tenant
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 
+	"github.com/JRedCodes/rollout-controller/internal/token"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,21 +44,38 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 // Create inserts a new tenant with a freshly generated API key, and seeds
-// its default model catalog in the same transaction. The plaintext key is
-// returned exactly once here — only its hash is ever persisted.
+// its default model catalog, all in one new transaction. The plaintext key
+// is returned exactly once here — only its hash is ever persisted.
 func (r *Repository) Create(ctx context.Context, name string) (Tenant, string, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Tenant{}, "", fmt.Errorf("begin create tenant tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	t, plaintextKey, err := r.CreateTx(ctx, tx, name)
+	if err != nil {
+		return Tenant{}, "", err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Tenant{}, "", fmt.Errorf("commit create tenant tx: %w", err)
+	}
+
+	return t, plaintextKey, nil
+}
+
+// CreateTx is Create's logic run inside a caller-supplied transaction
+// instead of one of its own, for callers that need tenant creation to be
+// atomic with other inserts -- e.g. auth.UserRepository creating a tenant
+// and the user that owns it together.
+func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, name string) (Tenant, string, error) {
 	id := uuid.NewString()
 
 	plaintextKey, err := generateAPIKey()
 	if err != nil {
 		return Tenant{}, "", fmt.Errorf("generate api key: %w", err)
 	}
-
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return Tenant{}, "", fmt.Errorf("begin create tenant tx: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO tenants (id, name, api_key_hash) VALUES ($1, $2, $3)
@@ -77,11 +92,26 @@ func (r *Repository) Create(ctx context.Context, name string) (Tenant, string, e
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return Tenant{}, "", fmt.Errorf("commit create tenant tx: %w", err)
+	return Tenant{ID: id, Name: name}, plaintextKey, nil
+}
+
+// RegenerateAPIKey replaces a tenant's API key with a freshly generated
+// one -- the old key stops working immediately, since lookups only ever
+// match the current hash. Returns the new plaintext key, shown here
+// exactly once, same invariant as Create.
+func (r *Repository) RegenerateAPIKey(ctx context.Context, tenantID string) (string, error) {
+	plaintextKey, err := generateAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("generate api key: %w", err)
 	}
 
-	return Tenant{ID: id, Name: name}, plaintextKey, nil
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE tenants SET api_key_hash = $1 WHERE id = $2
+	`, hashAPIKey(plaintextKey), tenantID); err != nil {
+		return "", fmt.Errorf("update api key: %w", err)
+	}
+
+	return plaintextKey, nil
 }
 
 // AuthEntry is a tenant's ID paired with its API key hash, for the Seeder
@@ -129,14 +159,13 @@ func (r *Repository) GetIDByAPIKey(ctx context.Context, plaintextKey string) (st
 }
 
 func hashAPIKey(plaintextKey string) string {
-	sum := sha256.Sum256([]byte(plaintextKey))
-	return hex.EncodeToString(sum[:])
+	return token.Hash(plaintextKey)
 }
 
 func generateAPIKey() (string, error) {
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
+	raw, err := token.Generate()
+	if err != nil {
 		return "", err
 	}
-	return "tk_" + hex.EncodeToString(raw), nil
+	return "tk_" + raw, nil
 }

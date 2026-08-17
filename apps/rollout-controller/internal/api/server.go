@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JRedCodes/rollout-controller/internal/auth"
 	"github.com/JRedCodes/rollout-controller/internal/db"
 	"github.com/JRedCodes/rollout-controller/internal/metrics"
 	"github.com/JRedCodes/rollout-controller/internal/modelconfig"
@@ -26,8 +27,11 @@ type Server struct {
 	modelConfigPub       *modelconfig.Seeder
 	tenantRepo           *tenant.Repository
 	tenantPub            *tenant.Seeder
+	userRepo             *auth.UserRepository
+	sessionRepo          *auth.SessionRepository
 	adminAPIKey          string
 	featureFlagKeyPrefix string
+	cookieSecure         bool
 	httpServer           *http.Server
 }
 
@@ -40,8 +44,12 @@ func New(
 	modelConfigPub *modelconfig.Seeder,
 	tenantRepo *tenant.Repository,
 	tenantPub *tenant.Seeder,
+	userRepo *auth.UserRepository,
+	sessionRepo *auth.SessionRepository,
 	adminAPIKey string,
 	featureFlagKeyPrefix string,
+	allowedOrigins []string,
+	cookieSecure bool,
 ) *Server {
 	s := &Server{
 		pipelines:            pipelines,
@@ -51,21 +59,33 @@ func New(
 		modelConfigPub:       modelConfigPub,
 		tenantRepo:           tenantRepo,
 		tenantPub:            tenantPub,
+		userRepo:             userRepo,
+		sessionRepo:          sessionRepo,
 		adminAPIKey:          adminAPIKey,
 		featureFlagKeyPrefix: featureFlagKeyPrefix,
+		cookieSecure:         cookieSecure,
 	}
 
 	// Unauthenticated: health check, tenant bootstrapping (gated by
-	// ADMIN_API_KEY instead), and SSE -- browsers' EventSource can't send
-	// custom headers at all, so it authenticates itself via a query param
-	// instead of going through authMiddleware. See handleEvents.
+	// ADMIN_API_KEY instead), sign-up/sign-in/sign-out (there's no
+	// session yet -- signing in is what creates one), and SSE --
+	// browsers' EventSource can't send custom headers at all, so it
+	// authenticates itself via a query param instead of going through
+	// authMiddleware. See handleEvents.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /tenants", s.handleCreateTenant)
+	mux.HandleFunc("POST /auth/signup", s.handleSignUp)
+	mux.HandleFunc("POST /auth/signin", s.handleSignIn)
+	mux.HandleFunc("POST /auth/signout", s.handleSignOut)
 	mux.HandleFunc("GET /events", s.handleEvents)
 
-	// Every other route requires a valid tenant API key via the Authorization header.
+	// Every other route requires a valid tenant API key via the
+	// Authorization header, or (auth/me, regenerate-key, and eventually
+	// the dashboard's own calls) a session cookie -- see authMiddleware.
 	authed := http.NewServeMux()
+	authed.HandleFunc("GET /auth/me", s.handleMe)
+	authed.HandleFunc("POST /auth/regenerate-key", s.handleRegenerateKey)
 	authed.HandleFunc("GET /rollout", s.handleGetRollout)
 	authed.HandleFunc("GET /rollout/metrics", s.handleGetMetrics)
 	authed.HandleFunc("GET /rollout/decisions", s.handleGetDecisions)
@@ -80,7 +100,7 @@ func New(
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: corsMiddleware(mux),
+		Handler: newCORSMiddleware(allowedOrigins)(mux),
 	}
 
 	return s
@@ -90,19 +110,34 @@ type contextKey int
 
 const tenantIDContextKey contextKey = iota
 
-// authMiddleware resolves "Authorization: Bearer <key>" to a tenant ID and
-// stores it in the request context for handlers to read via
-// tenantIDFromContext.
+// authMiddleware resolves a tenant ID (and, when authentication came from a
+// session rather than a bearer token, a user ID too) and stores them in the
+// request context for handlers to read via tenantIDFromContext /
+// userIDFromContext. Two ways in, tried in order:
+//  1. "Authorization: Bearer <tenant-api-key>" -- the stress-tester, curl,
+//     and any other scripted caller. Resolves a tenant only, no user.
+//  2. The session cookie -- the dashboard, once signed in. Resolves both,
+//     since a session belongs to a user who owns exactly one tenant.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		tenantID, err := s.resolveAPIKey(r.Context(), key)
+		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+
+		var tenantID, userID string
+		var err error
+		if bearer != "" {
+			tenantID, err = s.resolveAPIKey(r.Context(), bearer)
+		} else {
+			tenantID, userID, err = s.resolveSession(r)
+		}
 		if err != nil {
 			writeAuthError(w, err)
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), tenantIDContextKey, tenantID)
+		if userID != "" {
+			ctx = context.WithValue(ctx, userIDContextKey, userID)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -117,15 +152,36 @@ func (s *Server) resolveAPIKey(ctx context.Context, key string) (string, error) 
 	return s.tenantRepo.GetIDByAPIKey(ctx, key)
 }
 
+// resolveSession resolves the session cookie, if present, to the tenant
+// and user it belongs to.
+func (s *Server) resolveSession(r *http.Request) (tenantID, userID string, err error) {
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return "", "", errMissingAPIKey
+	}
+
+	uid, err := s.sessionRepo.UserIDForToken(r.Context(), c.Value)
+	if err != nil {
+		return "", "", err
+	}
+
+	u, err := s.userRepo.GetByID(r.Context(), uid)
+	if err != nil {
+		return "", "", err
+	}
+
+	return u.TenantID, u.ID, nil
+}
+
 var errMissingAPIKey = errors.New("missing api key")
 
 func writeAuthError(w http.ResponseWriter, err error) {
 	if errors.Is(err, errMissingAPIKey) {
-		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		http.Error(w, "missing bearer token or session", http.StatusUnauthorized)
 		return
 	}
-	if errors.Is(err, tenant.ErrInvalidAPIKey) {
-		http.Error(w, "invalid api key", http.StatusUnauthorized)
+	if errors.Is(err, tenant.ErrInvalidAPIKey) || errors.Is(err, auth.ErrInvalidSession) || errors.Is(err, auth.ErrUserNotFound) {
+		http.Error(w, "invalid or expired credentials", http.StatusUnauthorized)
 		return
 	}
 	log.Printf("api: auth lookup failed: %v", err)
@@ -498,15 +554,33 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// newCORSMiddleware only echoes back an allowlisted Origin (plus
+// Access-Control-Allow-Credentials) instead of "*" -- required for the
+// session cookie: browsers refuse credentialed cross-origin requests
+// against a wildcard origin. Origins not on the list get no CORS headers
+// at all, same as a same-origin request would need none.
+func newCORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[o] = struct{}{}
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				if _, ok := allowed[origin]; ok {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+					w.Header().Set("Vary", "Origin")
+				}
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

@@ -9,13 +9,17 @@ export class UnauthorizedError extends Error {
   }
 }
 
-// Wraps fetch: attaches the stored tenant API key, and on a 401 clears it
-// (so the App root falls back to the key-entry gate) and throws a typed
-// error instead of letting callers see an opaque failed response.
+// Wraps fetch: prefers a legacy stored API key (Bearer header) when
+// present, otherwise relies on the session cookie (credentials: include)
+// -- authMiddleware tries Bearer first either way, so a stored key always
+// wins if both exist. On a 401, clears any stored key (so the App root
+// falls back to the sign-in view if it was relying on one) and throws a
+// typed error instead of letting callers see an opaque failed response.
 async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const apiKey = getApiKey();
   const res = await fetch(`${BASE}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       ...init.headers,
@@ -124,6 +128,17 @@ export async function createRollout(input: CreateRolloutInput): Promise<Rollout>
     throw new Error(message || `POST /rollouts: ${res.status}`);
   }
   return res.json() as Promise<Rollout>;
+}
+
+export async function regenerateApiKey(): Promise<{ apiKey: string }> {
+  const res = await apiFetch(`/auth/regenerate-key`, { method: "POST" });
+  if (!res.ok) throw new Error(`POST /auth/regenerate-key: ${res.status}`);
+  return res.json() as Promise<{ apiKey: string }>;
+}
+
+export async function signOut(): Promise<void> {
+  const res = await apiFetch(`/auth/signout`, { method: "POST" });
+  if (!res.ok) throw new Error(`POST /auth/signout: ${res.status}`);
 }
 
 export async function fetchModelConfigs(): Promise<ModelConfig[]> {

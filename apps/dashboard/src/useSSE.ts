@@ -6,13 +6,15 @@ export function useSSE() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    // Browsers' EventSource can't send custom headers, so the API key goes
-    // as a query param here -- the one route the server accepts that from.
+    // Browsers' EventSource can't send custom headers, so a stored API key
+    // goes as a query param here -- the one route the server accepts that
+    // from. Without one, withCredentials carries the session cookie
+    // instead (EventSource doesn't send cookies by default).
     const apiKey = getApiKey();
     const url = apiKey
       ? `/api/events?api_key=${encodeURIComponent(apiKey)}`
       : "/api/events";
-    const es = new EventSource(url);
+    const es = new EventSource(url, { withCredentials: !apiKey });
 
     es.onmessage = () => {
       void queryClient.invalidateQueries({ queryKey: ["rollout"] });

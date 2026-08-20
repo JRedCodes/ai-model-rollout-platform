@@ -1,0 +1,10 @@
+**/node_modules/
+**/dist/
+**/coverage/
+**/*.tsbuildinfo
+.git/
+apps/dashboard/playwright-report/
+apps/dashboard/test-results/
+apps/*/.env
+documents/
+*.md

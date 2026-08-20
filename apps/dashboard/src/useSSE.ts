@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getApiKey } from "./apiKey.ts";
+import { API_BASE } from "./apiBase.ts";
 
 export function useSSE() {
   const queryClient = useQueryClient();
@@ -11,7 +12,8 @@ export function useSSE() {
     // from. Without one, withCredentials carries the session cookie
     // instead (EventSource doesn't send cookies by default).
     const apiKey = getApiKey();
-    const url = apiKey ? `/api/events?api_key=${encodeURIComponent(apiKey)}` : "/api/events";
+    const eventsUrl = `${API_BASE}/events`;
+    const url = apiKey ? `${eventsUrl}?api_key=${encodeURIComponent(apiKey)}` : eventsUrl;
     const es = new EventSource(url, { withCredentials: !apiKey });
 
     es.onmessage = () => {

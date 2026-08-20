@@ -1,6 +1,7 @@
 import { getApiKey, clearApiKey } from "./apiKey.ts";
+import { API_BASE } from "./apiBase.ts";
 
-const BASE = "/api";
+const BASE = API_BASE;
 
 export class UnauthorizedError extends Error {
   constructor() {

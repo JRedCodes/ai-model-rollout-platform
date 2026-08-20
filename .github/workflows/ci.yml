@@ -6,6 +6,40 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: Lint (Prettier, golangci-lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: apps/rollout-controller/go.sum
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prettier
+        run: npm run format:check
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.13.0
+          working-directory: apps/rollout-controller
+
+      # No ESLint yet: typescript-eslint hard-blocks TypeScript 7 (this
+      # project's version throughout) as of writing -- confirmed by running
+      # it locally, not just a peer-dependency warning. Tracked upstream at
+      # typescript-eslint/typescript-eslint#10940; add an eslint step here
+      # once that lands.
+
   node:
     name: Node (typecheck, build, unit tests)
     runs-on: ubuntu-latest

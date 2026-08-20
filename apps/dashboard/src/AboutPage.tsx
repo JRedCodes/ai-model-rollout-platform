@@ -107,6 +107,15 @@ export function AboutPage() {
             >
               the project's README
             </a>
+            . Curious how a specific piece works under the hood?{" "}
+            <a
+              href={`${REPO_URL}/tree/main/documents`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-slate-500 hover:text-slate-300 underline underline-offset-2"
+            >
+              Each service has its own deep-dive doc
+            </a>
             .
           </p>
         </section>

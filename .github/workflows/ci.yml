@@ -29,7 +29,7 @@ jobs:
         run: npm run format:check
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.0
           working-directory: apps/rollout-controller

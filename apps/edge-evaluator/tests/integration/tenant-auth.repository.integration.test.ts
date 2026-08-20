@@ -45,9 +45,7 @@ describe("tenant-auth repository integration", () => {
   });
 
   it("throws InvalidAPIKeyError for a key with no matching redis entry", async () => {
-    await expect(
-      resolveTenantId(`tk_${randomUUID()}`),
-    ).rejects.toBeInstanceOf(InvalidAPIKeyError);
+    await expect(resolveTenantId(`tk_${randomUUID()}`)).rejects.toBeInstanceOf(InvalidAPIKeyError);
   });
 
   it("falls back to the in-memory cache during a redis outage, for a key already resolved once", async () => {
@@ -69,9 +67,7 @@ describe("tenant-auth repository integration", () => {
 
     await redisClient.disconnect();
     try {
-      await expect(resolveTenantId(neverSeenKey)).rejects.toBeInstanceOf(
-        RedisUnavailableError,
-      );
+      await expect(resolveTenantId(neverSeenKey)).rejects.toBeInstanceOf(RedisUnavailableError);
     } finally {
       await connectRedis();
     }

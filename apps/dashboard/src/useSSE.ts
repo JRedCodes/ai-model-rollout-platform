@@ -11,9 +11,7 @@ export function useSSE() {
     // from. Without one, withCredentials carries the session cookie
     // instead (EventSource doesn't send cookies by default).
     const apiKey = getApiKey();
-    const url = apiKey
-      ? `/api/events?api_key=${encodeURIComponent(apiKey)}`
-      : "/api/events";
+    const url = apiKey ? `/api/events?api_key=${encodeURIComponent(apiKey)}` : "/api/events";
     const es = new EventSource(url, { withCredentials: !apiKey });
 
     es.onmessage = () => {

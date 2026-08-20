@@ -1,7 +1,4 @@
-import {
-  featureFlagSchema,
-  type FeatureFlag,
-} from "@rollout-platform/contracts";
+import { featureFlagSchema, type FeatureFlag } from "@rollout-platform/contracts";
 
 import { env } from "../config/env.js";
 import { redisClient } from "../redis/redis.client.js";
@@ -28,9 +25,7 @@ export class RedisUnavailableError extends Error {
   }
 }
 
-export async function getFeatureFlag(
-  featureFlagKey: string,
-): Promise<FeatureFlag> {
+export async function getFeatureFlag(featureFlagKey: string): Promise<FeatureFlag> {
   let serializedFlag: string | null;
 
   try {

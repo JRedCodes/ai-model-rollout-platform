@@ -1,22 +1,10 @@
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  it,
-} from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import {
-  connectRedis,
-  redisClient,
-} from "../../src/redis/redis.client.js";
+import { connectRedis, redisClient } from "../../src/redis/redis.client.js";
 
-import {
-  getFeatureFlag,
-} from "../../src/repositories/feature-flag.repository.js";
+import { getFeatureFlag } from "../../src/repositories/feature-flag.repository.js";
 
-const testFeatureFlagKey =
-  "feature-flag:model-routing:test";
+const testFeatureFlagKey = "feature-flag:model-routing:test";
 
 const testFeatureFlag = {
   flagKey: "model-routing",
@@ -32,10 +20,7 @@ describe("feature flag repository integration", () => {
   beforeAll(async () => {
     await connectRedis();
 
-    await redisClient.set(
-      testFeatureFlagKey,
-      JSON.stringify(testFeatureFlag),
-    );
+    await redisClient.set(testFeatureFlagKey, JSON.stringify(testFeatureFlag));
   });
 
   afterAll(async () => {

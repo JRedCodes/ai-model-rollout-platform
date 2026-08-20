@@ -120,19 +120,19 @@ npm start -- --mode=steady --apiKey=tk_...
 npm start -- --mode=steady --reset
 ```
 
-| Mode | RPS | Duration | Candidate % start | Expected outcome |
-|------|-----|----------|-------------------|-----------------|
-| `steady` | 50 | 10 min | 10% | Controller advances 10→25→50→75→100→COMPLETE, one step per 2-min window |
-| `burst` | 200 | 30 s | 100% | Guard trips absolute window (>5% errors) within ~5 s → hold; fresh window (>30%) → rollback |
+| Mode     | RPS | Duration | Candidate % start | Expected outcome                                                                            |
+| -------- | --- | -------- | ----------------- | ------------------------------------------------------------------------------------------- |
+| `steady` | 50  | 10 min   | 10%               | Controller advances 10→25→50→75→100→COMPLETE, one step per 2-min window                     |
+| `burst`  | 200 | 30 s     | 100%              | Guard trips absolute window (>5% errors) within ~5 s → hold; fresh window (>30%) → rollback |
 
 **Env vars** (all have sane defaults):
 
-| Variable | Default |
-|----------|---------|
-| `EDGE_EVALUATOR_URL` | `http://localhost:4002` |
-| `ROLLOUT_CONTROLLER_URL` | `http://localhost:4003` |
-| `DATABASE_URL` | `postgres://localhost:5432/rollout_platform` |
-| `TENANT_API_KEY` | seeded demo tenant's key (same as `--apiKey`) |
+| Variable                 | Default                                       |
+| ------------------------ | --------------------------------------------- |
+| `EDGE_EVALUATOR_URL`     | `http://localhost:4002`                       |
+| `ROLLOUT_CONTROLLER_URL` | `http://localhost:4003`                       |
+| `DATABASE_URL`           | `postgres://localhost:5432/rollout_platform`  |
+| `TENANT_API_KEY`         | seeded demo tenant's key (same as `--apiKey`) |
 
 ### Rollout Controller — `apps/rollout-controller` (Go, port 4003)
 
@@ -140,21 +140,21 @@ npm start -- --mode=steady --reset
 
 Single binary. Four goroutines run for the process's whole life, independent of which tenants (if any) currently have an active rollout:
 
-| Goroutine | Interval | Responsibility |
-|-----------|----------|----------------|
-| `api` | — | HTTP read/write API, per-tenant SSE hubs, manual rollback |
-| `batchlogger` | 10s | Bulk-flushes inference events to `inference_events` via `COPY` (shared across all tenants) |
-| `modelConfigSeeder` | heartbeat | Re-publishes every tenant's model configurations from Postgres to Redis |
-| `tenantSeeder` | heartbeat | Re-publishes every tenant's `tenant-auth:<key-hash> → tenantId` entry to Redis |
+| Goroutine           | Interval  | Responsibility                                                                             |
+| ------------------- | --------- | ------------------------------------------------------------------------------------------ |
+| `api`               | —         | HTTP read/write API, per-tenant SSE hubs, manual rollback                                  |
+| `batchlogger`       | 10s       | Bulk-flushes inference events to `inference_events` via `COPY` (shared across all tenants) |
+| `modelConfigSeeder` | heartbeat | Re-publishes every tenant's model configurations from Postgres to Redis                    |
+| `tenantSeeder`      | heartbeat | Re-publishes every tenant's `tenant-auth:<key-hash> → tenantId` entry to Redis             |
 
 A **supervisor loop** in `main.go` is a reconciliation loop, not a single-rollout cycle: every ~5s it diffs Postgres's current set of active `(tenant, rollout)` pairs against which tenants actually have a pipeline running, tears down pipelines whose tenant went idle or moved to a different rollout, and starts pipelines for anything newly active. Multiple tenants' pipelines run concurrently, each with four goroutines of its own:
 
-| Goroutine | Interval | Responsibility |
-|-----------|----------|----------------|
-| `ingestion` | continuous | Consumes the shared Redis Stream via a **per-tenant** consumer group, discarding any event whose `rolloutId` isn't this tenant's (every group independently sees the entire stream — Redis Streams consumer groups have no server-side content filtering) |
-| `guard` | 5s | Early rollback detection — fresh window (last 50 reqs) and absolute window |
-| `controller` | 2 min | Evaluates error rate + P95 latency; advances, holds, or resumes the rollout |
-| `writer` | event-driven + 60s heartbeat | Sole owner of this tenant's Redis and Postgres writes; re-seeds its feature flag every 60s; broadcasts SSE events to its own tenant's connected dashboard clients only |
+| Goroutine    | Interval                     | Responsibility                                                                                                                                                                                                                                            |
+| ------------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ingestion`  | continuous                   | Consumes the shared Redis Stream via a **per-tenant** consumer group, discarding any event whose `rolloutId` isn't this tenant's (every group independently sees the entire stream — Redis Streams consumer groups have no server-side content filtering) |
+| `guard`      | 5s                           | Early rollback detection — fresh window (last 50 reqs) and absolute window                                                                                                                                                                                |
+| `controller` | 2 min                        | Evaluates error rate + P95 latency; advances, holds, or resumes the rollout                                                                                                                                                                               |
+| `writer`     | event-driven + 60s heartbeat | Sole owner of this tenant's Redis and Postgres writes; re-seeds its feature flag every 60s; broadcasts SSE events to its own tenant's connected dashboard clients only                                                                                    |
 
 When a tenant has no active rollout, its pipeline simply doesn't exist — `GET /rollout` and `GET /rollout/metrics` respond with `{"active": false}` for that tenant until it creates one via `POST /rollouts`. Which tenant a request is asking about is always resolved from its `Authorization` header, never from anything in the URL or body.
 
@@ -182,20 +182,20 @@ The summaries above cover what each service does; the `documents/` directory cov
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Language (services) | TypeScript 7, Go 1.24 |
-| Runtime | Node.js 20+, Go toolchain |
-| HTTP | Express 5, Go `net/http` |
-| Frontend | React 19, Vite 6, Tailwind CSS 3, TanStack Query |
-| Validation | Zod 4 |
-| Caching / messaging | Redis 7 (Docker), Redis Streams |
-| Database | PostgreSQL 18 |
-| DB driver (Go) | `pgx/v5` with `pgxpool` |
-| Migrations | `golang-migrate` (SQL files) |
-| Testing | Vitest 4 |
-| Monorepo | npm workspaces |
-| Infrastructure | Docker Compose |
+| Layer               | Technology                                       |
+| ------------------- | ------------------------------------------------ |
+| Language (services) | TypeScript 7, Go 1.24                            |
+| Runtime             | Node.js 20+, Go toolchain                        |
+| HTTP                | Express 5, Go `net/http`                         |
+| Frontend            | React 19, Vite 6, Tailwind CSS 3, TanStack Query |
+| Validation          | Zod 4                                            |
+| Caching / messaging | Redis 7 (Docker), Redis Streams                  |
+| Database            | PostgreSQL 18                                    |
+| DB driver (Go)      | `pgx/v5` with `pgxpool`                          |
+| Migrations          | `golang-migrate` (SQL files)                     |
+| Testing             | Vitest 4                                         |
+| Monorepo            | npm workspaces                                   |
+| Infrastructure      | Docker Compose                                   |
 
 ---
 
@@ -284,31 +284,31 @@ Swap in your own tenant's key from step 5 if you created one. Or use the dashboa
 
 ### Edge Evaluator (`apps/edge-evaluator/.env`)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `4002` | HTTP port |
-| `MODEL_SERVICE_URL` | `http://localhost:4001` | Model Service base URL |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
-| `FEATURE_FLAG_KEY_PREFIX` | `feature-flag:model-routing:` | Prefix + tenant ID = the Redis key read for that tenant's rollout config |
-| `TELEMETRY_STREAM_KEY` | `telemetry:inference-completed` | Redis Stream for telemetry events |
-| `STABLE_MODEL_FALLBACK_ID` | `model-v1` | Model used when Redis is unreachable |
+| Variable                   | Default                         | Description                                                              |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------------------ |
+| `PORT`                     | `4002`                          | HTTP port                                                                |
+| `MODEL_SERVICE_URL`        | `http://localhost:4001`         | Model Service base URL                                                   |
+| `REDIS_URL`                | `redis://localhost:6379`        | Redis connection URL                                                     |
+| `FEATURE_FLAG_KEY_PREFIX`  | `feature-flag:model-routing:`   | Prefix + tenant ID = the Redis key read for that tenant's rollout config |
+| `TELEMETRY_STREAM_KEY`     | `telemetry:inference-completed` | Redis Stream for telemetry events                                        |
+| `STABLE_MODEL_FALLBACK_ID` | `model-v1`                      | Model used when Redis is unreachable                                     |
 
 ### Model Service (`apps/model-service/.env`)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `4001` | HTTP port |
+| Variable    | Default                  | Description                                                  |
+| ----------- | ------------------------ | ------------------------------------------------------------ |
+| `PORT`      | `4001`                   | HTTP port                                                    |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection URL — source of per-model simulation config |
 
 ### Rollout Controller (environment or shell)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
-| `DATABASE_URL` | `postgres://jakeredding@localhost:5432/rollout_platform` | Postgres connection URL |
-| `MIGRATIONS_PATH` | `./migrations` | Path to SQL migration files |
-| `FEATURE_FLAG_KEY_PREFIX` | `feature-flag:model-routing:` | Prefix used when computing a new rollout's feature flag key — must match the Edge Evaluator's `FEATURE_FLAG_KEY_PREFIX` |
-| `ADMIN_API_KEY` | `dev-admin-key` | Shared secret gating `POST /tenants` — distinct from any per-tenant key |
+| Variable                  | Default                                                  | Description                                                                                                             |
+| ------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`               | `redis://localhost:6379`                                 | Redis connection URL                                                                                                    |
+| `DATABASE_URL`            | `postgres://jakeredding@localhost:5432/rollout_platform` | Postgres connection URL                                                                                                 |
+| `MIGRATIONS_PATH`         | `./migrations`                                           | Path to SQL migration files                                                                                             |
+| `FEATURE_FLAG_KEY_PREFIX` | `feature-flag:model-routing:`                            | Prefix used when computing a new rollout's feature flag key — must match the Edge Evaluator's `FEATURE_FLAG_KEY_PREFIX` |
+| `ADMIN_API_KEY`           | `dev-admin-key`                                          | Shared secret gating `POST /tenants` — distinct from any per-tenant key                                                 |
 
 ---
 
@@ -326,6 +326,7 @@ curl -X POST http://localhost:4002/v1/infer \
 ```
 
 **Success response:**
+
 ```json
 {
   "requestId": "req-1",
@@ -340,21 +341,21 @@ curl -X POST http://localhost:4002/v1/infer \
 
 Every route below is scoped to whichever tenant `Authorization: Bearer <key>` resolves to — never to anything a caller specifies separately. Two exceptions have their own auth: `POST /tenants` is gated by `X-Admin-Key` instead, and `GET /events` (browsers' `EventSource` can't send custom headers) also accepts the key as an `?api_key=` query param.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check — unauthenticated |
-| `POST` | `/tenants` | Create a tenant — `X-Admin-Key`, not a tenant key. Returns the plaintext API key once; seeds two default model configs |
-| `GET` | `/rollout` | Current rollout state (model versions, percentage, held status), or `{"active": false}` if none is active |
-| `GET` | `/rollout/metrics` | Live metrics snapshot (error rates, P95 latency, window counts), or `{"active": false}` |
-| `GET` | `/rollout/decisions` | Last 50 decisions for the active rollout (`[]` if none) |
-| `POST` | `/rollout/rollback` | Force an immediate rollback, bypassing guard/controller — `409` if no rollout is active |
-| `GET` | `/rollouts` | List all of this tenant's rollouts, newest first |
-| `GET` | `/rollouts/{id}` | Get a single rollout by ID — `404` if it belongs to another tenant |
-| `POST` | `/rollouts` | Create a rollout — `409` if this tenant already has one `RUNNING`/`HELD`. `stableModelVersionId` is optional; omitted, it defaults to the most recently `COMPLETED` rollout's candidate |
-| `GET` | `/models` | List this tenant's model configurations (failure rate, latency range) |
-| `GET` | `/models/{id}` | Get a single model's configuration |
-| `PUT` | `/models/{id}` | Update a model's failure rate and latency range — persists to Postgres, publishes to Redis, broadcasts an SSE event |
-| `GET` | `/events` | SSE stream — pushes `advance`, `hold`, `resume`, `rollback`, `complete` events to this tenant's connected clients only |
+| Method | Path                 | Description                                                                                                                                                                             |
+| ------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/health`            | Health check — unauthenticated                                                                                                                                                          |
+| `POST` | `/tenants`           | Create a tenant — `X-Admin-Key`, not a tenant key. Returns the plaintext API key once; seeds two default model configs                                                                  |
+| `GET`  | `/rollout`           | Current rollout state (model versions, percentage, held status), or `{"active": false}` if none is active                                                                               |
+| `GET`  | `/rollout/metrics`   | Live metrics snapshot (error rates, P95 latency, window counts), or `{"active": false}`                                                                                                 |
+| `GET`  | `/rollout/decisions` | Last 50 decisions for the active rollout (`[]` if none)                                                                                                                                 |
+| `POST` | `/rollout/rollback`  | Force an immediate rollback, bypassing guard/controller — `409` if no rollout is active                                                                                                 |
+| `GET`  | `/rollouts`          | List all of this tenant's rollouts, newest first                                                                                                                                        |
+| `GET`  | `/rollouts/{id}`     | Get a single rollout by ID — `404` if it belongs to another tenant                                                                                                                      |
+| `POST` | `/rollouts`          | Create a rollout — `409` if this tenant already has one `RUNNING`/`HELD`. `stableModelVersionId` is optional; omitted, it defaults to the most recently `COMPLETED` rollout's candidate |
+| `GET`  | `/models`            | List this tenant's model configurations (failure rate, latency range)                                                                                                                   |
+| `GET`  | `/models/{id}`       | Get a single model's configuration                                                                                                                                                      |
+| `PUT`  | `/models/{id}`       | Update a model's failure rate and latency range — persists to Postgres, publishes to Redis, broadcasts an SSE event                                                                     |
+| `GET`  | `/events`            | SSE stream — pushes `advance`, `hold`, `resume`, `rollback`, `complete` events to this tenant's connected clients only                                                                  |
 
 ---
 
@@ -368,17 +369,17 @@ The controller advances one step per successful 2-minute evaluation window.
 
 ### Guard thresholds (evaluated every 5s, minimum 50 requests)
 
-| Window | Metric | Default threshold | Action on breach |
-|--------|--------|-------------------|-----------------|
-| Fresh (last 50 reqs) | Error rate | > 30% | Immediate rollback |
-| Absolute (all retained) | Error rate | > 5% | Hold (block advancement) |
+| Window                  | Metric     | Default threshold | Action on breach         |
+| ----------------------- | ---------- | ----------------- | ------------------------ |
+| Fresh (last 50 reqs)    | Error rate | > 30%             | Immediate rollback       |
+| Absolute (all retained) | Error rate | > 5%              | Hold (block advancement) |
 
 ### Controller thresholds (evaluated every 2 minutes)
 
-| Metric | Default threshold | Action on breach |
-|--------|-------------------|-----------------|
-| Error rate | > 2% | Hold |
-| P95 latency | > 250ms | Hold |
+| Metric      | Default threshold | Action on breach |
+| ----------- | ----------------- | ---------------- |
+| Error rate  | > 2%              | Hold             |
+| P95 latency | > 250ms           | Hold             |
 
 **Guard always wins.** When the guard issues a rollback, the held flag blocks any advance. Recovery requires creating a new rollout via `POST /rollouts`.
 
@@ -392,7 +393,7 @@ The controller doesn't require a rollout to be running. On boot, or any time non
 
 ### HOLD recovers automatically; ROLLBACK doesn't
 
-A `HOLD` isn't sticky — the controller keeps evaluating metrics through it instead of freezing. If a full 2-minute window comes back clean (error rate ≤ 2%, P95 ≤ 250ms), it fires `RESUME`: the hold clears and the rollout returns to `RUNNING` at its *current* percentage, without also advancing in that same cycle. A second consecutive clean window is what actually advances to the next step — one window proves it's safe again, a second earns the next step. This applies whether the guard or the controller raised the hold. The guard's 5s checks keep running independently throughout, so a resume that turns out to be premature gets caught and re-held within seconds rather than sitting on a false "recovered" status for a full 2-minute cycle.
+A `HOLD` isn't sticky — the controller keeps evaluating metrics through it instead of freezing. If a full 2-minute window comes back clean (error rate ≤ 2%, P95 ≤ 250ms), it fires `RESUME`: the hold clears and the rollout returns to `RUNNING` at its _current_ percentage, without also advancing in that same cycle. A second consecutive clean window is what actually advances to the next step — one window proves it's safe again, a second earns the next step. This applies whether the guard or the controller raised the hold. The guard's 5s checks keep running independently throughout, so a resume that turns out to be premature gets caught and re-held within seconds rather than sitting on a false "recovered" status for a full 2-minute cycle.
 
 `ROLLBACK` is different and stays fully manual: once `ROLLED_BACK`, fixing the underlying cause does not bring a rollout back on its own. Recovery requires a new rollout row — a rollback is treated as a hard stop that deserves a human decision, not something metrics alone should walk back.
 
@@ -404,7 +405,7 @@ Redis is the control plane between the rollout controller and the Edge Evaluator
 
 - **Startup seeding** — on boot, the rollout controller writes every tenant's feature flag, model configs, and auth entry from Postgres to Redis immediately.
 - **60-second heartbeats** — `writer` re-publishes each tenant's feature flag, and `modelConfigSeeder`/`tenantSeeder` re-publish model configs and auth entries, so Redis recovers automatically within one heartbeat cycle after a restart or flush.
-- **Edge Evaluator auth cache** — since authentication is now a Redis read, a resolved `key → tenantId` mapping is cached in memory after first success. A tenant already serving traffic keeps working through a *transient* Redis outage; a brand-new tenant's very first request during one still fails, since there's nothing cached yet to fall back to.
+- **Edge Evaluator auth cache** — since authentication is now a Redis read, a resolved `key → tenantId` mapping is cached in memory after first success. A tenant already serving traffic keeps working through a _transient_ Redis outage; a brand-new tenant's very first request during one still fails, since there's nothing cached yet to fall back to.
 - **Edge Evaluator model-routing fallback** — if Redis is unreachable for the feature-flag lookup specifically (auth having already succeeded, from cache or otherwise), the Edge Evaluator routes that tenant's traffic to `STABLE_MODEL_FALLBACK_ID` and publishes telemetry with null rollout fields. Clients receive a valid inference response rather than an error.
 
 ---
@@ -429,18 +430,23 @@ cd apps/rollout-controller && go build ./... && go vet ./...
 ## Database Schema
 
 ### `tenants`
+
 `id`, `name`, `api_key_hash` (SHA-256 of the plaintext key — never stored), `created_at`/`updated_at`. The plaintext key is generated once, returned in `POST /tenants`'s response, and never persisted or retrievable again.
 
 ### `rollouts`
+
 Stores the rollout configuration and current lifecycle status, scoped by `tenant_id`. Policy fields (thresholds, window sizes) are inlined per row, so each rollout could in principle carry its own policy — though today's Management API doesn't expose overriding them yet. Only one rollout per tenant may be `RUNNING`/`HELD` at a time, enforced by a partial unique index on `tenant_id` (`rollouts_single_active_per_tenant_idx`); the `status` column drives what the supervisor loop's reconciler loads.
 
 ### `inference_events`
+
 One row per inference, written by the batch logger in 10-second bulk flushes. Indexed on `(rollout_id, occurred_at)` for the time-window queries the guard and controller issue. Shared across all tenants — isolation is by `rollout_id`, not a separate `tenant_id` column, since every rollout already belongs to exactly one tenant.
 
 ### `rollout_decisions`
+
 Append-only audit log of every decision the guard, controller, or manual API makes. Fields: `action` (HOLD / RESUME / ROLLBACK / ADVANCE / COMPLETE), `reason`, `source` (guard / controller / manual), `decided_at`.
 
 ### `model_configurations`
+
 Per-tenant, per-model-version simulation params (`failure_rate`, `min_latency_ms`, `max_latency_ms`), edited via the Rollout Controller's `/models/{id}` API. Primary key is `(tenant_id, model_version_id)` — two tenants can each have their own independent "model-v1" with entirely different simulated behavior. Published to Redis on every write so Model Service picks up changes without a restart.
 
 ---

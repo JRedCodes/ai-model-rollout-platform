@@ -3,7 +3,10 @@ import { fetchDecisions } from "./api.ts";
 import type { Decision } from "./api.ts";
 
 const ACTION_STYLES: Record<string, { badge: string; dot: string }> = {
-  ADVANCE: { badge: "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20", dot: "bg-emerald-400" },
+  ADVANCE: {
+    badge: "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20",
+    dot: "bg-emerald-400",
+  },
   HOLD: { badge: "bg-amber-500/10 text-amber-400 ring-amber-500/20", dot: "bg-amber-400" },
   ROLLBACK: { badge: "bg-red-500/10 text-red-400 ring-red-500/20", dot: "bg-red-400" },
   COMPLETE: { badge: "bg-sky-500/10 text-sky-400 ring-sky-500/20", dot: "bg-sky-400" },
@@ -38,7 +41,9 @@ function DecisionRow({ d }: { d: Decision }) {
       <ActionBadge action={d.action} />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-slate-300 truncate">{d.reason}</p>
-        <p className="text-xs text-slate-600 mt-0.5">{d.source} · {time}</p>
+        <p className="text-xs text-slate-600 mt-0.5">
+          {d.source} · {time}
+        </p>
       </div>
     </div>
   );
@@ -64,7 +69,9 @@ export function DecisionFeed() {
       )}
 
       {!isLoading && (!data || data.length === 0) && (
-        <p className="text-sm text-slate-600">No decisions yet — waiting for controller evaluation.</p>
+        <p className="text-sm text-slate-600">
+          No decisions yet — waiting for controller evaluation.
+        </p>
       )}
 
       {data && data.length > 0 && (

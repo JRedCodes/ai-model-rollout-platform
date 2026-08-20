@@ -13,6 +13,4 @@ export const modelSimulationProfileSchema = z
     path: ["minLatencyMs"],
   });
 
-export type ModelSimulationProfile = z.infer<
-  typeof modelSimulationProfileSchema
->;
+export type ModelSimulationProfile = z.infer<typeof modelSimulationProfileSchema>;

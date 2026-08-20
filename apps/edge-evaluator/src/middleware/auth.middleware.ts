@@ -1,9 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 
-import {
-  InvalidAPIKeyError,
-  resolveTenantId,
-} from "../repositories/tenant-auth.repository.js";
+import { InvalidAPIKeyError, resolveTenantId } from "../repositories/tenant-auth.repository.js";
 import { RedisUnavailableError } from "../repositories/feature-flag.repository.js";
 
 declare global {
@@ -22,9 +19,7 @@ export async function requireTenantAuth(
   next: NextFunction,
 ): Promise<void> {
   const header = req.header("authorization") ?? "";
-  const apiKey = header.startsWith(BEARER_PREFIX)
-    ? header.slice(BEARER_PREFIX.length)
-    : "";
+  const apiKey = header.startsWith(BEARER_PREFIX) ? header.slice(BEARER_PREFIX.length) : "";
 
   if (!apiKey) {
     res.status(401).json({ error: "MISSING_BEARER_TOKEN" });

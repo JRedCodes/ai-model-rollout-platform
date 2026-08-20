@@ -17,10 +17,7 @@ export function printReport(
 ): void {
   const { totalRequests, successCount, errorCount, latencies } = stats;
 
-  const errorRate =
-    totalRequests > 0
-      ? ((errorCount / totalRequests) * 100).toFixed(1)
-      : "0.0";
+  const errorRate = totalRequests > 0 ? ((errorCount / totalRequests) * 100).toFixed(1) : "0.0";
   const successRate = (100 - parseFloat(errorRate)).toFixed(1);
   const achievedRps = (totalRequests / durationSecs).toFixed(1);
   const p50 = calcPercentile(latencies, 0.5);
@@ -28,21 +25,9 @@ export function printReport(
   const p99 = calcPercentile(latencies, 0.99);
 
   console.log();
-  console.log(
-    c.bold(
-      c.cyan(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-      ),
-    ),
-  );
+  console.log(c.bold(c.cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")));
   console.log(c.bold(c.cyan("  FINAL REPORT")));
-  console.log(
-    c.bold(
-      c.cyan(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-      ),
-    ),
-  );
+  console.log(c.bold(c.cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")));
   console.log();
   console.log(`  ${c.bold("Requests")}    ${totalRequests.toLocaleString()} total`);
   console.log(
@@ -74,22 +59,13 @@ export function printReport(
   }
 
   console.log();
-  console.log(
-    c.bold(
-      c.cyan(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-      ),
-    ),
-  );
+  console.log(c.bold(c.cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")));
   console.log();
 }
 
 function calcPercentile(latencies: number[], p: number): number {
   if (latencies.length === 0) return 0;
   const sorted = [...latencies].sort((a, b) => a - b);
-  const idx = Math.min(
-    Math.floor(sorted.length * p),
-    sorted.length - 1,
-  );
+  const idx = Math.min(Math.floor(sorted.length * p), sorted.length - 1);
   return sorted[idx] ?? 0;
 }

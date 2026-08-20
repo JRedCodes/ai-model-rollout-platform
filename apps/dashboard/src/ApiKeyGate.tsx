@@ -21,9 +21,7 @@ export function ApiKeyGate({ onBack }: { onBack?: () => void }) {
           <p className="text-sm font-semibold tracking-widest uppercase text-slate-400">
             Rollout Platform
           </p>
-          <p className="text-xs text-slate-500 mt-1">
-            Enter your tenant API key to continue.
-          </p>
+          <p className="text-xs text-slate-500 mt-1">Enter your tenant API key to continue.</p>
         </div>
 
         <input
@@ -44,8 +42,8 @@ export function ApiKeyGate({ onBack }: { onBack?: () => void }) {
         </button>
 
         <p className="text-xs text-slate-600">
-          Keys are issued via <code className="text-slate-500">POST /tenants</code>{" "}
-          (admin-gated) and stored only in this browser.
+          Keys are issued via <code className="text-slate-500">POST /tenants</code> (admin-gated)
+          and stored only in this browser.
         </p>
 
         {onBack && (

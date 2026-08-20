@@ -8,7 +8,7 @@ The entry point for every simulated inference request. Authenticates the caller,
 
 ## Role in the system
 
-Everything downstream depends on what this service decides. It never runs a model itself; it resolves *which* model version a request should hit (via the tenant's feature flag in Redis) and hands off to the Model Service to actually simulate a response. It has no direct Postgres access at all — both its authentication and its routing configuration are Redis reads, published there by the Rollout Controller, which is the only thing with a database connection in this system. That indirection is deliberate: this service can authenticate and route traffic even if the Rollout Controller's database is briefly unreachable, as long as Redis itself is up.
+Everything downstream depends on what this service decides. It never runs a model itself; it resolves _which_ model version a request should hit (via the tenant's feature flag in Redis) and hands off to the Model Service to actually simulate a response. It has no direct Postgres access at all — both its authentication and its routing configuration are Redis reads, published there by the Rollout Controller, which is the only thing with a database connection in this system. That indirection is deliberate: this service can authenticate and route traffic even if the Rollout Controller's database is briefly unreachable, as long as Redis itself is up.
 
 ---
 
@@ -16,7 +16,7 @@ Everything downstream depends on what this service decides. It never runs a mode
 
 ### `app.ts` + `server.ts` — wiring
 
-`app.ts` is two lines of routing: `GET /health` (unauthenticated), and `POST /v1/infer` behind `requireTenantAuth` (`app.use("/v1", requireTenantAuth, inferenceRouter)` — the middleware runs for the whole `/v1` prefix, not just this one route, so any future route added under `/v1` inherits the auth gate for free). `server.ts` connects Redis before binding the HTTP port at all (`await connectRedis()` ahead of `app.listen`) and exits the process on failure — this service refuses to come up without Redis, unlike the request-time resilience described below, which only covers Redis going away *after* a successful boot.
+`app.ts` is two lines of routing: `GET /health` (unauthenticated), and `POST /v1/infer` behind `requireTenantAuth` (`app.use("/v1", requireTenantAuth, inferenceRouter)` — the middleware runs for the whole `/v1` prefix, not just this one route, so any future route added under `/v1` inherits the auth gate for free). `server.ts` connects Redis before binding the HTTP port at all (`await connectRedis()` ahead of `app.listen`) and exits the process on failure — this service refuses to come up without Redis, unlike the request-time resilience described below, which only covers Redis going away _after_ a successful boot.
 
 ### `config/env.ts` — configuration
 
@@ -28,7 +28,7 @@ Reads `Authorization: Bearer <key>` and nothing else — no cookie parsing, no s
 
 ### `repositories/tenant-auth.repository.ts` — `resolveTenantId`
 
-Hashes the presented key (SHA-256, matching the Go side's `internal/token.Hash`) and reads `tenant-auth:<hash>` from Redis — populated by the Rollout Controller's `tenant.Seeder`, republished on a heartbeat (see `documents/ROLLOUT_CONTROLLER.md`). The one piece of state this service keeps beyond a single request: `resolvedTenantCache`, a plain in-memory `Map<hash, tenantId>` that remembers every key that has *ever* resolved successfully in this process's lifetime. If a later Redis read throws, a cache hit is returned instead of propagating the error — a tenant already serving traffic keeps working through a transient Redis outage. A key that has never been seen before during an outage has nothing to fall back to and still fails with `RedisUnavailableError`. This is the same behavior the README's Redis Resilience section describes; this file is where it's actually implemented.
+Hashes the presented key (SHA-256, matching the Go side's `internal/token.Hash`) and reads `tenant-auth:<hash>` from Redis — populated by the Rollout Controller's `tenant.Seeder`, republished on a heartbeat (see `documents/ROLLOUT_CONTROLLER.md`). The one piece of state this service keeps beyond a single request: `resolvedTenantCache`, a plain in-memory `Map<hash, tenantId>` that remembers every key that has _ever_ resolved successfully in this process's lifetime. If a later Redis read throws, a cache hit is returned instead of propagating the error — a tenant already serving traffic keeps working through a transient Redis outage. A key that has never been seen before during an outage has nothing to fall back to and still fails with `RedisUnavailableError`. This is the same behavior the README's Redis Resilience section describes; this file is where it's actually implemented.
 
 ### `repositories/feature-flag.repository.ts` — `getActiveFeatureFlag`
 
@@ -63,20 +63,20 @@ Builds an `InferenceCompletedEvent` (schema versioned, `schemaVersion: 1`) and `
 
 `vitest.config.ts` scopes `test.include` to `src/**/*.test.ts` specifically — without it, `vitest run`'s default include also picks up `tests/integration/**`, silently requiring a live Redis for a plain `npm test`. Added in `ci/foundation` after finding exactly that.
 
-| File | Covers |
-|---|---|
-| `services/traffic-assignment.service.test.ts` | `selectModel` at 0%/100% candidate traffic, same-user consistency across calls, no-candidate-configured fallback to stable — pure function, no mocking needed |
+| File                                           | Covers                                                                                                                                                          |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services/traffic-assignment.service.test.ts`  | `selectModel` at 0%/100% candidate traffic, same-user consistency across calls, no-candidate-configured fallback to stable — pure function, no mocking needed   |
 | `repositories/feature-flag.repository.test.ts` | `getFeatureFlag`'s four outcomes (valid flag, missing key, invalid JSON, schema mismatch) plus the Redis-throws case, via `vi.mock("../redis/redis.client.js")` |
 
 ### Integration (`npm run test:integration`, needs a running Redis; one spec also needs a running Model Service)
 
 `vitest.integration.config.ts` scopes to `tests/integration/**/*.test.ts` — a separate config file, not just a different glob passed on the CLI, specifically so the two suites can't accidentally merge back together. Local: `docker compose up -d redis` (`docker-compose.yaml`), then `npm run test:integration`. CI's `node` job does the same.
 
-| File | Covers |
-|---|---|
-| `feature-flag.repository.integration.test.ts` | Seeds a real feature flag key in Redis, reads it back through `getFeatureFlag`, confirms it round-trips through the schema unchanged |
-| `model-service.client.integration.test.ts` | Seeds the one `model-config:<tenantId>:<modelVersionId>` key `requestModelInference` needs (self-contained rather than depending on the Go service also running to seed it), then makes a real HTTP call to a running Model Service |
-| `tenant-auth.repository.integration.test.ts` | Added in `test/integration-coverage` — there was **no** coverage at all for `tenant-auth.repository.ts` before this, despite it being the piece that actually matters for confirming session-cookie auth doesn't leak into this service. Seeded-key resolution, an unseeded key, and — the actual point of the in-memory cache — a *real* simulated Redis outage (`redisClient.disconnect()`, not a mock) proving a previously-resolved key still works while a never-seen key still correctly fails |
+| File                                          | Covers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `feature-flag.repository.integration.test.ts` | Seeds a real feature flag key in Redis, reads it back through `getFeatureFlag`, confirms it round-trips through the schema unchanged                                                                                                                                                                                                                                                                                                                                                                 |
+| `model-service.client.integration.test.ts`    | Seeds the one `model-config:<tenantId>:<modelVersionId>` key `requestModelInference` needs (self-contained rather than depending on the Go service also running to seed it), then makes a real HTTP call to a running Model Service                                                                                                                                                                                                                                                                  |
+| `tenant-auth.repository.integration.test.ts`  | Added in `test/integration-coverage` — there was **no** coverage at all for `tenant-auth.repository.ts` before this, despite it being the piece that actually matters for confirming session-cookie auth doesn't leak into this service. Seeded-key resolution, an unseeded key, and — the actual point of the in-memory cache — a _real_ simulated Redis outage (`redisClient.disconnect()`, not a mock) proving a previously-resolved key still works while a never-seen key still correctly fails |
 
 ### End-to-end
 
@@ -86,11 +86,11 @@ Exercised as a real running process, not tested in isolation — by `apps/dashbo
 
 ## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `4002` | HTTP port |
-| `MODEL_SERVICE_URL` | `http://localhost:4001` | Model Service base URL |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
-| `FEATURE_FLAG_KEY_PREFIX` | `feature-flag:model-routing:` | Prefix + tenant ID = the Redis key read for that tenant's rollout config; must match the Rollout Controller's copy |
-| `TELEMETRY_STREAM_KEY` | `telemetry:inference-completed` | Redis Stream telemetry events are published to |
-| `STABLE_MODEL_FALLBACK_ID` | `model-v1` | Model used when Redis is unreachable for the feature-flag lookup |
+| Variable                   | Default                         | Description                                                                                                        |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `PORT`                     | `4002`                          | HTTP port                                                                                                          |
+| `MODEL_SERVICE_URL`        | `http://localhost:4001`         | Model Service base URL                                                                                             |
+| `REDIS_URL`                | `redis://localhost:6379`        | Redis connection URL                                                                                               |
+| `FEATURE_FLAG_KEY_PREFIX`  | `feature-flag:model-routing:`   | Prefix + tenant ID = the Redis key read for that tenant's rollout config; must match the Rollout Controller's copy |
+| `TELEMETRY_STREAM_KEY`     | `telemetry:inference-completed` | Redis Stream telemetry events are published to                                                                     |
+| `STABLE_MODEL_FALLBACK_ID` | `model-v1`                      | Model used when Redis is unreachable for the feature-flag lookup                                                   |

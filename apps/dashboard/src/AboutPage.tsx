@@ -26,20 +26,18 @@ export function AboutPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-100">How this works</h1>
           <p className="text-sm text-slate-400 mt-2">
-            A distributed system that safely rolls out a new AI model version by
-            shifting traffic to it incrementally, watching error rates and
-            latency the whole way, and rolling back automatically if something
-            looks wrong.
+            A distributed system that safely rolls out a new AI model version by shifting traffic to
+            it incrementally, watching error rates and latency the whole way, and rolling back
+            automatically if something looks wrong.
           </p>
         </div>
 
         <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 p-4 text-sm text-amber-300">
-          <strong className="font-semibold">This is a simulated demo environment.</strong>{" "}
-          No real model inference happens here -- the Model Service fabricates
-          responses with a configurable failure rate and latency range, so a
-          rollout's health can be steered on demand to show every code path
-          (advance, hold, resume, rollback) without needing a real model or
-          real production traffic.
+          <strong className="font-semibold">This is a simulated demo environment.</strong> No real
+          model inference happens here -- the Model Service fabricates responses with a configurable
+          failure rate and latency range, so a rollout's health can be steered on demand to show
+          every code path (advance, hold, resume, rollback) without needing a real model or real
+          production traffic.
         </div>
 
         <section>
@@ -71,7 +69,10 @@ export function AboutPage() {
           </h2>
           <div className="grid sm:grid-cols-2 gap-3">
             {services.map((service) => (
-              <div key={service.name} className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+              <div
+                key={service.name}
+                className="rounded-lg border border-slate-800 bg-slate-900 p-4"
+              >
                 <div className="flex items-baseline justify-between gap-2">
                   <p className="text-sm font-medium text-slate-200">{service.name}</p>
                   <p className="text-xs text-slate-600 font-mono">{service.tech}</p>
@@ -91,14 +92,12 @@ export function AboutPage() {
             <li>Sign up for an account -- this creates your own isolated tenant and a rollout.</li>
             <li>Copy the API key shown once at sign-up (or regenerate one later from Account).</li>
             <li>
-              Run the stress-tester CLI with that key to generate traffic and
-              watch the rollout advance, hold, or roll back live in this
-              dashboard.
+              Run the stress-tester CLI with that key to generate traffic and watch the rollout
+              advance, hold, or roll back live in this dashboard.
             </li>
           </ol>
           <p className="text-xs text-slate-600 pt-1">
-            Full setup instructions (prerequisites, running each service
-            locally, CLI usage) live in{" "}
+            Full setup instructions (prerequisites, running each service locally, CLI usage) live in{" "}
             <a
               href={REPO_URL}
               target="_blank"

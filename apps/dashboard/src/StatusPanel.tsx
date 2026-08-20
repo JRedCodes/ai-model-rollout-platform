@@ -27,7 +27,11 @@ function AdvancementLadder({ pct }: { pct: number }) {
         <div className="flex-1 flex items-center gap-1">
           {LADDER.map((step, i) => {
             const reached = pct >= step;
-            const active = pct > 0 && ((i === 0 && pct < step) || (pct >= (LADDER[i - 1] ?? 0) && pct < step) || pct === step);
+            const active =
+              pct > 0 &&
+              ((i === 0 && pct < step) ||
+                (pct >= (LADDER[i - 1] ?? 0) && pct < step) ||
+                pct === step);
             return (
               <div key={step} className="flex-1 flex flex-col items-center gap-1">
                 <div

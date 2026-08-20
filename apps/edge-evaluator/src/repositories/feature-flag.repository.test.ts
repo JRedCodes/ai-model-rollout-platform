@@ -44,32 +44,24 @@ describe("feature flag repository", () => {
   it("throws FeatureFlagNotFoundError when key is missing", async () => {
     mockGet.mockResolvedValue(null);
 
-    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(
-      FeatureFlagNotFoundError,
-    );
+    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(FeatureFlagNotFoundError);
   });
 
   it("throws InvalidFeatureFlagError when value is not valid JSON", async () => {
     mockGet.mockResolvedValue("not-json{{{");
 
-    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(
-      InvalidFeatureFlagError,
-    );
+    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(InvalidFeatureFlagError);
   });
 
   it("throws InvalidFeatureFlagError when JSON does not match schema", async () => {
     mockGet.mockResolvedValue(JSON.stringify({ unexpected: true }));
 
-    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(
-      InvalidFeatureFlagError,
-    );
+    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(InvalidFeatureFlagError);
   });
 
   it("throws RedisUnavailableError when the redis client throws", async () => {
     mockGet.mockRejectedValue(new Error("connect ECONNREFUSED"));
 
-    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(
-      RedisUnavailableError,
-    );
+    await expect(getFeatureFlag("any-key")).rejects.toBeInstanceOf(RedisUnavailableError);
   });
 });

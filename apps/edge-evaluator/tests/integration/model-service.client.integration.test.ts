@@ -38,8 +38,8 @@ describe("model-service client integration", () => {
       requestId: "integration-request-1",
       tenantId: testTenantId,
       input: {
-        message: "Hello from the Edge Evaluator"
-      }
+        message: "Hello from the Edge Evaluator",
+      },
     });
 
     expect(response.requestId).toBe("integration-request-1");

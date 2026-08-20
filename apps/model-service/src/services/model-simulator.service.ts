@@ -1,7 +1,4 @@
-import type {
-  ModelInferenceRequest,
-  ModelInferenceResponse,
-} from "@rollout-platform/contracts";
+import type { ModelInferenceRequest, ModelInferenceResponse } from "@rollout-platform/contracts";
 
 import {
   getModelConfig,
@@ -26,10 +23,7 @@ export async function simulateInference(
 ): Promise<ModelInferenceResponse> {
   const configuration = await getModelConfig(request.tenantId, modelVersionId);
 
-  const latencyMs = randomInteger(
-    configuration.minLatencyMs,
-    configuration.maxLatencyMs,
-  );
+  const latencyMs = randomInteger(configuration.minLatencyMs, configuration.maxLatencyMs);
 
   await wait(latencyMs);
 

@@ -36,19 +36,13 @@ inferenceRouter.post("/infer", async (request, response) => {
   try {
     const featureFlag = await getActiveFeatureFlag(tenantId);
 
-    const selectedModelVersionId = selectModel(
-      parsedRequest.data.userId,
-      featureFlag,
-    );
+    const selectedModelVersionId = selectModel(parsedRequest.data.userId, featureFlag);
 
-    const modelResponse = await requestModelInference(
-      selectedModelVersionId,
-      {
-        requestId: parsedRequest.data.requestId,
-        tenantId,
-        input: parsedRequest.data.input,
-      },
-    );
+    const modelResponse = await requestModelInference(selectedModelVersionId, {
+      requestId: parsedRequest.data.requestId,
+      tenantId,
+      input: parsedRequest.data.input,
+    });
 
     publishInferenceEvent(
       parsedRequest.data.requestId,
@@ -77,14 +71,11 @@ inferenceRouter.post("/infer", async (request, response) => {
       console.warn("Redis unavailable — routing to stable model fallback");
 
       try {
-        const modelResponse = await requestModelInference(
-          env.STABLE_MODEL_FALLBACK_ID,
-          {
-            requestId: parsedRequest.data.requestId,
-            tenantId,
-            input: parsedRequest.data.input,
-          },
-        );
+        const modelResponse = await requestModelInference(env.STABLE_MODEL_FALLBACK_ID, {
+          requestId: parsedRequest.data.requestId,
+          tenantId,
+          input: parsedRequest.data.input,
+        });
 
         publishInferenceEvent(
           parsedRequest.data.requestId,

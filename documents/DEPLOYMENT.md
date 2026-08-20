@@ -20,20 +20,20 @@ This plan originally added a temporary shared-secret gate on the mutating endpoi
 
 ## Target architecture
 
-| Piece | AWS service | Why |
-|---|---|---|
-| `rollout-controller` | ECS Fargate, desired count = 1 | Singleton by design — see above |
-| `edge-evaluator` | ECS Fargate, desired count = 1 | Stateless today; could scale later, starting at 1 to match current behavior |
-| `model-service` | ECS Fargate, desired count = 1 | Same as above |
-| `dashboard` | S3 + CloudFront | Static Vite build — no reason to spend a container on it |
-| Postgres | RDS, single `db.t4g.micro`, no Multi-AZ | Demo scale, not HA; replaces the local trust-auth instance |
-| Redis | ElastiCache, single `cache.t4g.micro` | Same role as the current Docker Redis |
-| Routing | Application Load Balancer, path-based rules | Dashboard talks to one API origin; ALB fans out to the three backend services |
-| TLS / domain | ACM + Route53 | One cert for CloudFront (dashboard), one for the ALB (API) |
-| Secrets | Secrets Manager → ECS task secrets | DB password and `ADMIN_API_KEY` (gates `POST /tenants`) never sit in plaintext in a task definition |
-| Images | ECR, one repo per service | Standard ECS image source |
-| IaC | Terraform | Reproducible; cheap to tear down/rebuild when not actively demoing |
-| CI/CD | GitHub Actions → ECR → ECS | Extends the existing validate-on-every-PR workflow with an image build/push/deploy step, making a deploy a `git push` to `main`, not a manual `docker push` |
+| Piece                | AWS service                                 | Why                                                                                                                                                         |
+| -------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rollout-controller` | ECS Fargate, desired count = 1              | Singleton by design — see above                                                                                                                             |
+| `edge-evaluator`     | ECS Fargate, desired count = 1              | Stateless today; could scale later, starting at 1 to match current behavior                                                                                 |
+| `model-service`      | ECS Fargate, desired count = 1              | Same as above                                                                                                                                               |
+| `dashboard`          | S3 + CloudFront                             | Static Vite build — no reason to spend a container on it                                                                                                    |
+| Postgres             | RDS, single `db.t4g.micro`, no Multi-AZ     | Demo scale, not HA; replaces the local trust-auth instance                                                                                                  |
+| Redis                | ElastiCache, single `cache.t4g.micro`       | Same role as the current Docker Redis                                                                                                                       |
+| Routing              | Application Load Balancer, path-based rules | Dashboard talks to one API origin; ALB fans out to the three backend services                                                                               |
+| TLS / domain         | ACM + Route53                               | One cert for CloudFront (dashboard), one for the ALB (API)                                                                                                  |
+| Secrets              | Secrets Manager → ECS task secrets          | DB password and `ADMIN_API_KEY` (gates `POST /tenants`) never sit in plaintext in a task definition                                                         |
+| Images               | ECR, one repo per service                   | Standard ECS image source                                                                                                                                   |
+| IaC                  | Terraform                                   | Reproducible; cheap to tear down/rebuild when not actively demoing                                                                                          |
+| CI/CD                | GitHub Actions → ECR → ECS                  | Extends the existing validate-on-every-PR workflow with an image build/push/deploy step, making a deploy a `git push` to `main`, not a manual `docker push` |
 
 ---
 
@@ -51,21 +51,27 @@ This plan originally added a temporary shared-secret gate on the mutating endpoi
 ## Phased rollout
 
 ### Phase 1 — Containerize locally
+
 Write the four Dockerfiles, apply the two code changes above (fail-fast config, `VITE_API_URL`). Verify with `docker compose up` using all four services plus the existing Redis entry — confirm the whole stack behaves identically to `npm run dev`/`go run .` today (traffic flow, SSE updates, mid-rollout model-config change). No AWS involved yet.
 
 ### Phase 2 — IaC skeleton
+
 Terraform for: VPC (public + private subnets), RDS instance, ElastiCache instance, ECR repos, an ALB with no listeners wired yet. Confirm the data plane is reachable from a bastion/local machine before anything depends on it.
 
 ### Phase 3 — Ship containers
+
 Push images to ECR. Stand up the three Fargate services with task definitions pulling secrets from Secrets Manager. Wire ALB target groups + path-based routing. Create the first tenant and rollout through the Management API (or `curl`, per the README's "Create your first rollout") against the deployed ALB — no direct `psql` access to RDS needed for this anymore.
 
 ### Phase 4 — Dashboard + domain + TLS
+
 S3 bucket + CloudFront distribution for the dashboard build. Route53 records and ACM certs for both the CloudFront and ALB origins. Set `ALLOWED_ORIGINS` to the real CloudFront/custom domain and `COOKIE_SECURE=true`, then confirm sign-up, sign-in, and the session cookie all survive the cross-origin split between the dashboard's origin and the ALB's — this is the first point in the whole plan where auth is genuinely cross-origin instead of same-origin-via-Vite-proxy, so it's the first real test of the `feat/auth` CORS/cookie config described in this doc's Current-state findings.
 
 ### Phase 5 — CI/CD
+
 `.github/workflows/ci.yml` already validates every push/PR (typecheck, build, unit + integration tests, E2E). What's still missing: on push to `main`, build + push images to ECR and force a new ECS deployment. Extend the existing workflow with a `deploy` job (or add a new one gated on the existing jobs succeeding) rather than standing up a parallel pipeline.
 
 ### Phase 6 — Smoke test
+
 Re-run the `stress-tester`'s `steady` scenario against the live AWS URL, the same way it was verified locally, to confirm guard/controller timing, SSE live updates, and a mid-rollout model-config change all behave the same in the deployed environment as they did locally. `.github/workflows/stress-smoke.yml`'s daily `burst`-mode run (see `documents/STRESS_TESTER.md`) is the closest existing precedent for automating this against a live URL, though today it only ever targets `localhost`.
 
 ---

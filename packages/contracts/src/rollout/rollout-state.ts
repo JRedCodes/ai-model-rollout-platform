@@ -9,6 +9,4 @@ export const rolloutStatusSchema = z.enum([
   "COMPLETED",
 ]);
 
-export type RolloutStatus = z.infer<
-  typeof rolloutStatusSchema
->;
+export type RolloutStatus = z.infer<typeof rolloutStatusSchema>;

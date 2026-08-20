@@ -30,9 +30,7 @@ function redisKey(tenantId: string, modelVersionId: string): string {
   return `${REDIS_KEY_PREFIX}${tenantId}:${modelVersionId}`;
 }
 
-function buildDefaultProfile(
-  modelVersionId: string,
-): ModelSimulationProfile {
+function buildDefaultProfile(modelVersionId: string): ModelSimulationProfile {
   return {
     modelVersionId,
     failureRate: DEFAULT_FAILURE_RATE,

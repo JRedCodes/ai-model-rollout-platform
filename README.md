@@ -56,6 +56,8 @@ Built as an incremental engineering project — each subsystem developed and ver
 
 ### Edge Evaluator — `apps/edge-evaluator` (TypeScript, port 4002)
 
+**Deep dive:** [`documents/EDGE_EVALUATOR.md`](documents/EDGE_EVALUATOR.md)
+
 - Requires `Authorization: Bearer <tenant-api-key>` on every request — resolved to a tenant ID via a Redis lookup (`tenant-auth:<key-hash>`), with an in-memory cache of already-resolved keys so a tenant that's already serving traffic keeps working through a brief Redis outage
 - Validates incoming requests with Zod
 - Reads the authenticated tenant's rollout configuration from Redis (`feature-flag:model-routing:<tenantId>`)
@@ -66,6 +68,8 @@ Built as an incremental engineering project — each subsystem developed and ver
 
 ### Model Service — `apps/model-service` (TypeScript, port 4001)
 
+**Deep dive:** [`documents/MODEL_SERVICE.md`](documents/MODEL_SERVICE.md)
+
 - Simulates model inference with configurable latency and failure rates
 - Reads per-tenant, per-model config (`failureRate`, `minLatencyMs`, `maxLatencyMs`) from Redis (`model-config:<tenantId>:<modelVersionId>`), published by the Rollout Controller from Postgres — no redeploy needed to change simulated behavior, and one tenant's model catalog is fully independent of another's
 - Falls back to a built-in default profile (1% failure, 50–150ms) if Redis is unreachable or returns unparseable data; a genuinely unconfigured model version still 404s
@@ -73,6 +77,8 @@ Built as an incremental engineering project — each subsystem developed and ver
 - To exercise the guard's rollback path mid-rollout, `PUT` a higher failure rate to `model-v2` (e.g. `0.35`) via the dashboard's Model configuration panel or `curl -X PUT localhost:4003/models/model-v2 -H "Authorization: Bearer <key>" -d '{"failureRate":0.35,"minLatencyMs":50,"maxLatencyMs":200}'`
 
 ### Dashboard — `apps/dashboard` (React + TypeScript, port 5173)
+
+**Deep dive:** [`documents/DASHBOARD.md`](documents/DASHBOARD.md)
 
 Real-time control panel for monitoring and operating a live rollout.
 
@@ -90,6 +96,8 @@ npm run dev --workspace @rollout-platform/dashboard
 ```
 
 ### Stress Tester — `apps/stress-tester` (TypeScript, CLI)
+
+**Deep dive:** [`documents/STRESS_TESTER.md`](documents/STRESS_TESTER.md)
 
 Local CLI tool for end-to-end load testing. Generates HTTP traffic against the Edge Evaluator, monitors rollout state changes via the Rollout Controller API, and prints a final report.
 
@@ -128,6 +136,8 @@ npm start -- --mode=steady --reset
 
 ### Rollout Controller — `apps/rollout-controller` (Go, port 4003)
 
+**Deep dive:** [`documents/ROLLOUT_CONTROLLER.md`](documents/ROLLOUT_CONTROLLER.md)
+
 Single binary. Four goroutines run for the process's whole life, independent of which tenants (if any) currently have an active rollout:
 
 | Goroutine | Interval | Responsibility |
@@ -150,7 +160,23 @@ When a tenant has no active rollout, its pipeline simply doesn't exist — `GET 
 
 ### Contracts — `packages/contracts` (TypeScript)
 
+**Deep dive:** [`documents/CONTRACTS.md`](documents/CONTRACTS.md)
+
 Shared Zod schemas for all service boundaries, organised into subdirectories: `inference/`, `rollout/`, `simulation/`, `telemetry/`.
+
+---
+
+## Documentation
+
+The summaries above cover what each service does; the `documents/` directory covers how, in depth — low-level design per module/file, the reasoning behind non-obvious decisions, and exactly what's test-covered and what isn't:
+
+- [`documents/EDGE_EVALUATOR.md`](documents/EDGE_EVALUATOR.md)
+- [`documents/MODEL_SERVICE.md`](documents/MODEL_SERVICE.md)
+- [`documents/ROLLOUT_CONTROLLER.md`](documents/ROLLOUT_CONTROLLER.md)
+- [`documents/DASHBOARD.md`](documents/DASHBOARD.md)
+- [`documents/STRESS_TESTER.md`](documents/STRESS_TESTER.md)
+- [`documents/CONTRACTS.md`](documents/CONTRACTS.md)
+- [`documents/DEPLOYMENT.md`](documents/DEPLOYMENT.md) — the AWS deployment plan; not yet executed, see its own Open Items
 
 ---
 

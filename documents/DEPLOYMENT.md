@@ -9,10 +9,10 @@ This plan originally added a temporary shared-secret gate on the mutating endpoi
 ## Current-state findings that shape this plan
 
 - **`rollout-controller` is a stateful singleton**, not a horizontally-scalable service. It holds in-memory atomic state (`held`, `rolledBack`, `pct`), owns the sole membership in its Redis Streams consumer group, and runs an in-process SSE hub. It must always run at **desired-count = 1**. A container that just runs continuously (ECS Fargate) is a better fit than a request-triggered, scale-to-zero model (Cloud Run) for this reason — its most important work (5s guard tick, 2-min controller tick, stream consumption) happens on background goroutines with no HTTP request involved at all.
-- **`main.go` silently falls back to `localhost`** for `REDIS_URL`/`DATABASE_URL` if unset (`envOr(...)`). In a container this means a missing env var fails weirdly (tries to reach `localhost` inside the container) instead of failing fast at boot.
-- **The dashboard's API calls are relative** (`const BASE = "/api"` in `api.ts`, `new EventSource("/api/events")` in `useSSE.ts`), and only resolve today because Vite's dev server proxies `/api` → `localhost:4003`. Once the dashboard is served from CloudFront and the API from an ALB on a different origin, there is no equivalent proxy — needs a build-time absolute API base URL.
+- ~~**`main.go` silently falls back to `localhost`** for `REDIS_URL`/`DATABASE_URL` if unset~~ — **done.** Both are now required (`requireEnv`), `log.Fatalf` at boot if either is unset. Local dev now exports them explicitly (see README's Getting Started) rather than relying on a default.
+- ~~**The dashboard's API calls are relative**~~ — **done.** `VITE_API_URL` (default `/api`, unchanged local-dev behavior) is now a build-time env var, wired through a shared `apiBase.ts` used by both `api.ts` and `useSSE.ts`. Still needs to actually be set to the real ALB origin at deploy time (Phase 4).
 - **CORS on the Go API is already origin-allowlisted and credentialed** (`ALLOWED_ORIGINS` env var, default `http://localhost:5173`, plus `Access-Control-Allow-Credentials: true` for the session cookie) rather than wide open — a wildcard origin can't be combined with credentialed requests at all, browsers refuse it outright, so this had to change before real auth could ship, not after. Still needs `ALLOWED_ORIGINS` to actually include the deployed dashboard's real origin once one exists (CloudFront domain / custom domain), and `COOKIE_SECURE=true` for the session cookie to survive the CloudFront/ALB cross-origin split (see `documents/ROLLOUT_CONTROLLER.md`'s Configuration table).
-- **No Dockerfiles exist yet** for any of the four services — only Redis and Postgres have `docker-compose.yaml` entries today.
+- ~~**No Dockerfiles exist yet**~~ — **done.** All four services have one (`apps/*/Dockerfile`), and `docker-compose.yaml` builds and runs all four alongside Redis and Postgres — verified end-to-end (sign-up, rollout creation, real inference traffic, SSE, the dashboard's nginx proxy) against an isolated copy of the exact compose config, not just written and assumed correct.
 - **CI validates every push/PR** (`.github/workflows/ci.yml`: typecheck, build, unit tests, integration tests, and a full-stack Playwright E2E job, plus a separate scheduled load-test smoke workflow) but doesn't build or push any container image, and there's no deploy step — that gap is what Phase 5 below still needs to close.
 - **Migrations self-run on boot** (`db.RunMigrations` in `main.go`) — convenient for deploys (no separate migration step), but means the ECS task's DB credentials need schema-modify privileges. The first tenant and rollout can now be created through the Management API (or the dashboard) after the first deploy — no `psql` step required, unlike when this plan was first written.
 
@@ -39,20 +39,19 @@ This plan originally added a temporary shared-secret gate on the mutating endpoi
 
 ## Prerequisite code changes (before any AWS work)
 
-1. **Fail fast on missing config.** In `main.go`, require `DATABASE_URL` and `REDIS_URL` — `log.Fatalf` if unset, rather than defaulting to `localhost`. Keep a `localhost` default only behind an explicit local-dev path if that's useful, but never as the production behavior.
-2. **Add a build-time API base URL to the dashboard.** Introduce `VITE_API_URL`, defaulting to `/api` so local dev via the Vite proxy is unaffected. Update `api.ts`'s `BASE` and `useSSE.ts`'s `EventSource` URL to use it.
-3. **Write a Dockerfile per service:**
-   - `rollout-controller`: multi-stage — Go build stage, then a minimal alpine/distroless runtime image copying only the binary + `migrations/`.
-   - `edge-evaluator`, `model-service`: multi-stage — `npm run build` (tsc), then a slim `node:20-alpine` runtime running `node dist/server.js`.
-   - `dashboard`: build-only stage (`vite build`); the output is uploaded to S3, not run in a container.
+**All three complete** as of `chore/production-hardening` — this section is kept as a record of what shaped Phase 1, not a remaining TODO.
+
+1. ~~**Fail fast on missing config.**~~ `main.go` now requires `DATABASE_URL` and `REDIS_URL` via `requireEnv`, `log.Fatalf` if either is unset — no `localhost` fallback in any environment, local dev included.
+2. ~~**Add a build-time API base URL to the dashboard.**~~ `VITE_API_URL` (default `/api`) is wired through `apiBase.ts`, used by both `api.ts` and `useSSE.ts`.
+3. ~~**Write a Dockerfile per service.**~~ All four exist (`apps/*/Dockerfile`) and match the shapes originally specced here — `rollout-controller` and the two Node services multi-stage as planned; `dashboard` ended up with a runtime stage too (nginx serving the static build) so `docker-compose up` could actually run and curl it like the other three for local parity testing, not because it needs one in the real AWS deploy (that's still S3 + CloudFront, per Target architecture above).
 
 ---
 
 ## Phased rollout
 
-### Phase 1 — Containerize locally
+### Phase 1 — Containerize locally — **done**
 
-Write the four Dockerfiles, apply the two code changes above (fail-fast config, `VITE_API_URL`). Verify with `docker compose up` using all four services plus the existing Redis entry — confirm the whole stack behaves identically to `npm run dev`/`go run .` today (traffic flow, SSE updates, mid-rollout model-config change). No AWS involved yet.
+The four Dockerfiles and both prerequisite code changes are in (see above). `docker compose up` (all four app services + Postgres + Redis) verified against a fully isolated copy of the compose config: sign-up, rollout creation, real inference traffic through edge-evaluator → model-service, SSE, and the dashboard's nginx-proxied API access all confirmed working, including the two eventual-consistency lags (~5s supervisor reconcile, 60s model-config heartbeat) that are expected baseline behavior, not containerization bugs — see `documents/ROLLOUT_CONTROLLER.md`. No AWS involved yet; Phase 2 is the next actual step.
 
 ### Phase 2 — IaC skeleton
 

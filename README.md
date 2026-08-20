@@ -291,7 +291,7 @@ Swap in your own tenant's key from step 5 if you created one. Or use the dashboa
 ### Dashboard (build-time, e.g. `apps/dashboard/.env`)
 
 | Variable       | Default | Description                                                                                                                              |
-| -------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| -------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `VITE_API_URL` | `/api`  | API base URL, baked in at build time. `/api` only resolves via Vite's dev proxy — a production build needs the real absolute API origin. |
 
 ### Edge Evaluator (`apps/edge-evaluator/.env`)

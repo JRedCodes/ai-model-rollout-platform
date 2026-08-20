@@ -244,7 +244,13 @@ npm run dev --workspace @rollout-platform/model-service
 npm run dev --workspace @rollout-platform/edge-evaluator
 
 # Rollout Controller (run from its directory)
-cd apps/rollout-controller && go run .
+# DATABASE_URL/REDIS_URL are required -- no localhost default -- so a
+# missing one fails fast at boot instead of a container silently trying
+# to reach "localhost". Values below match the defaults this used to have.
+cd apps/rollout-controller
+DATABASE_URL="postgres://jakeredding@localhost:5432/rollout_platform" \
+REDIS_URL="redis://localhost:6379" \
+go run .
 
 # Dashboard (optional — open http://localhost:5173)
 npm run dev --workspace @rollout-platform/dashboard
@@ -302,13 +308,15 @@ Swap in your own tenant's key from step 5 if you created one. Or use the dashboa
 
 ### Rollout Controller (environment or shell)
 
-| Variable                  | Default                                                  | Description                                                                                                             |
-| ------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `REDIS_URL`               | `redis://localhost:6379`                                 | Redis connection URL                                                                                                    |
-| `DATABASE_URL`            | `postgres://jakeredding@localhost:5432/rollout_platform` | Postgres connection URL                                                                                                 |
-| `MIGRATIONS_PATH`         | `./migrations`                                           | Path to SQL migration files                                                                                             |
-| `FEATURE_FLAG_KEY_PREFIX` | `feature-flag:model-routing:`                            | Prefix used when computing a new rollout's feature flag key — must match the Edge Evaluator's `FEATURE_FLAG_KEY_PREFIX` |
-| `ADMIN_API_KEY`           | `dev-admin-key`                                          | Shared secret gating `POST /tenants` — distinct from any per-tenant key                                                 |
+| Variable                  | Default                       | Description                                                                                                             |
+| ------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`               | _(required — no default)_     | Redis connection URL; boot fails fast if unset                                                                          |
+| `DATABASE_URL`            | _(required — no default)_     | Postgres connection URL; boot fails fast if unset                                                                       |
+| `MIGRATIONS_PATH`         | `./migrations`                | Path to SQL migration files                                                                                             |
+| `FEATURE_FLAG_KEY_PREFIX` | `feature-flag:model-routing:` | Prefix used when computing a new rollout's feature flag key — must match the Edge Evaluator's `FEATURE_FLAG_KEY_PREFIX` |
+| `ADMIN_API_KEY`           | `dev-admin-key`               | Shared secret gating `POST /tenants` — distinct from any per-tenant key                                                 |
+| `ALLOWED_ORIGINS`         | `http://localhost:5173`       | Comma-separated CORS allowlist for the dashboard's session cookie                                                       |
+| `COOKIE_SECURE`           | `false`                       | `true` → session cookie gets `Secure` + `SameSite=None` (cross-origin deployment); `false` → `SameSite=Lax`             |
 
 ---
 

@@ -34,14 +34,10 @@ function MetricCard({ label, value, valueClass, sub, threshold }: MetricCardProp
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900 p-5">
       <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">{label}</p>
-      <p className={["text-3xl font-semibold tabular-nums", valueClass].join(" ")}>
-        {value}
-      </p>
+      <p className={["text-3xl font-semibold tabular-nums", valueClass].join(" ")}>{value}</p>
       {sub && <p className="text-xs text-slate-500 mt-1">{sub}</p>}
       {threshold && (
-        <p className="text-xs text-slate-600 mt-2 border-t border-slate-800 pt-2">
-          {threshold}
-        </p>
+        <p className="text-xs text-slate-600 mt-2 border-t border-slate-800 pt-2">{threshold}</p>
       )}
     </div>
   );
@@ -58,7 +54,10 @@ export function MetricsPanel() {
     return (
       <div className="grid grid-cols-2 gap-4">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="rounded-lg border border-slate-800 bg-slate-900 p-5 animate-pulse">
+          <div
+            key={i}
+            className="rounded-lg border border-slate-800 bg-slate-900 p-5 animate-pulse"
+          >
             <div className="h-3 bg-slate-800 rounded w-24 mb-3" />
             <div className="h-8 bg-slate-800 rounded w-20" />
           </div>

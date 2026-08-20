@@ -41,6 +41,88 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # The four app services below are for local docker-compose parity
+  # testing (confirming the images built from apps/*/Dockerfile actually
+  # behave like `npm run dev`/`go run .`) and eventual reference for the
+  # AWS deploy in documents/DEPLOYMENT.md -- not meant to run alongside
+  # your own `npm run dev`/`go run .` processes, since they'd fight over
+  # the same host ports (4001-4003, 8080).
+
+  rollout-controller:
+    build:
+      context: ./apps/rollout-controller
+    container_name: rollout-platform-rollout-controller
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://jakeredding@postgres:5432/rollout_platform
+      REDIS_URL: redis://redis:6379
+      ALLOWED_ORIGINS: http://localhost:8080
+    ports:
+      - "4003:4003"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  model-service:
+    build:
+      context: .
+      dockerfile: apps/model-service/Dockerfile
+    container_name: rollout-platform-model-service
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4001:4001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  edge-evaluator:
+    build:
+      context: .
+      dockerfile: apps/edge-evaluator/Dockerfile
+    container_name: rollout-platform-edge-evaluator
+    depends_on:
+      redis:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
+      MODEL_SERVICE_URL: http://model-service:4001
+    ports:
+      - "4002:4002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4002/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    container_name: rollout-platform-dashboard
+    depends_on:
+      rollout-controller:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
 volumes:
   redis-data:
   postgres-data:

@@ -21,10 +21,7 @@ interface SignUpResult {
 // this context: the session cookie POST /auth/signup sets becomes usable by
 // a subsequent page.goto() in the same test, without a separate sign-in
 // step.
-export async function apiSignUp(
-  context: BrowserContext,
-  email: string,
-): Promise<SignUpResult> {
+export async function apiSignUp(context: BrowserContext, email: string): Promise<SignUpResult> {
   const res = await context.request.post("/api/auth/signup", {
     data: { email, password: PASSWORD },
   });

@@ -32,8 +32,8 @@ import (
 const pipelinePollInterval = 5 * time.Second
 
 func main() {
-	redisURL := envOr("REDIS_URL", "redis://localhost:6379")
-	pgURL := envOr("DATABASE_URL", "postgres://jakeredding@localhost:5432/rollout_platform")
+	redisURL := requireEnv("REDIS_URL")
+	pgURL := requireEnv("DATABASE_URL")
 	migrationsPath := envOr("MIGRATIONS_PATH", "./migrations")
 	featureFlagKeyPrefix := envOr("FEATURE_FLAG_KEY_PREFIX", "feature-flag:model-routing:")
 	adminAPIKey := envOr("ADMIN_API_KEY", "dev-admin-key")
@@ -62,7 +62,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to redis: %v", err)
 	}
-	defer rdb.Close()
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			log.Printf("redis client close: %v", err)
+		}
+	}()
 
 	hubs := api.NewSSEHubRegistry()
 	pipelines := api.NewPipelineRegistry()
@@ -276,6 +280,21 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// requireEnv reads a required env var, failing fast at boot if it's unset
+// rather than silently falling back to a default that only makes sense on
+// a developer's own machine. DATABASE_URL and REDIS_URL specifically used
+// to default to localhost -- convenient locally, but meant a missing env
+// var in a container failed weirdly (tried to reach localhost inside the
+// container) instead of failing clearly at startup. Local dev now needs
+// both exported explicitly (see README.md's Getting Started).
+func requireEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		log.Fatalf("%s is required (no default -- see README.md's Getting Started)", key)
+	}
+	return v
 }
 
 // splitTrimmed splits s on sep and trims whitespace from each part -- used

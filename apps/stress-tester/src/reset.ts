@@ -2,10 +2,8 @@ import pg from "pg";
 
 const { Pool } = pg;
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://localhost:5432/rollout_platform";
-const ROLLOUT_CONTROLLER_URL =
-  process.env.ROLLOUT_CONTROLLER_URL ?? "http://localhost:4003";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://localhost:5432/rollout_platform";
+const ROLLOUT_CONTROLLER_URL = process.env.ROLLOUT_CONTROLLER_URL ?? "http://localhost:4003";
 
 // Rollouts are now created via POST /rollouts with a server-generated ID
 // (no more fixed "rollout-001") -- so the rollout to reset has to be
@@ -54,15 +52,9 @@ export async function reset(mode: "steady" | "burst", apiKey: string): Promise<v
       throw new Error(`No rollout found with id "${rolloutId}".`);
     }
 
-    await pool.query(
-      "DELETE FROM rollout_decisions WHERE rollout_id = $1",
-      [rolloutId],
-    );
+    await pool.query("DELETE FROM rollout_decisions WHERE rollout_id = $1", [rolloutId]);
 
-    await pool.query(
-      "DELETE FROM inference_events WHERE rollout_id = $1",
-      [rolloutId],
-    );
+    await pool.query("DELETE FROM inference_events WHERE rollout_id = $1", [rolloutId]);
   } finally {
     await pool.end();
   }

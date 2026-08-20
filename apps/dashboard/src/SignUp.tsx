@@ -53,9 +53,9 @@ export function SignUp({ onAuthenticated }: { onAuthenticated: () => void }) {
               Account created
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              This is your tenant API key -- paste it into the stress-tester CLI
-              (<code className="text-slate-500">--apiKey</code>) to run the
-              simulation. It's shown only once.
+              This is your tenant API key -- paste it into the stress-tester CLI (
+              <code className="text-slate-500">--apiKey</code>) to run the simulation. It's shown
+              only once.
             </p>
           </div>
 

@@ -1,32 +1,27 @@
 import { z } from "zod";
 
-export const inferenceCompletedEventSchema = z.object({
-  schemaVersion: z.literal(1),
-  eventId: z.string().min(1),
+export const inferenceCompletedEventSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    eventId: z.string().min(1),
 
-  requestId: z.string().min(1),
-  userId: z.string().min(1),
-  tenantId: z.string().min(1),
+    requestId: z.string().min(1),
+    userId: z.string().min(1),
+    tenantId: z.string().min(1),
 
-  rolloutId: z.string().min(1).nullable(),
-  rolloutPhaseId: z.string().min(1).nullable(),
+    rolloutId: z.string().min(1).nullable(),
+    rolloutPhaseId: z.string().min(1).nullable(),
 
-  modelVersionId: z.string().min(1),
-  assignment: z.enum(["stable", "candidate"]),
+    modelVersionId: z.string().min(1),
+    assignment: z.enum(["stable", "candidate"]),
 
-  success: z.boolean(),
-  errorType: z
-    .enum([
-      "SIMULATED_FAILURE",
-      "MODEL_TIMEOUT",
-      "INVALID_RESPONSE",
-    ])
-    .nullable(),
+    success: z.boolean(),
+    errorType: z.enum(["SIMULATED_FAILURE", "MODEL_TIMEOUT", "INVALID_RESPONSE"]).nullable(),
 
-  latencyMs: z.number().int().nonnegative(),
-  occurredAt: z.string().datetime(),
-})
-.superRefine((event, context) => {
+    latencyMs: z.number().int().nonnegative(),
+    occurredAt: z.string().datetime(),
+  })
+  .superRefine((event, context) => {
     if (event.success && event.errorType !== null) {
       context.addIssue({
         code: "custom",
@@ -44,6 +39,4 @@ export const inferenceCompletedEventSchema = z.object({
     }
   });
 
-export type InferenceCompletedEvent = z.infer<
-  typeof inferenceCompletedEventSchema
->;
+export type InferenceCompletedEvent = z.infer<typeof inferenceCompletedEventSchema>;

@@ -14,8 +14,7 @@ const { values } = parseArgs({
   strict: false,
 });
 
-const mode: "steady" | "burst" =
-  values.mode === "burst" ? "burst" : "steady";
+const mode: "steady" | "burst" = values.mode === "burst" ? "burst" : "steady";
 
 // Which tenant this run is paired with. Defaults to the seeded demo
 // tenant's key so the existing scenarios keep working unmodified, but
@@ -32,8 +31,7 @@ const SCENARIOS = {
     rps: 50,
     durationSecs: 600,
     label: "50 RPS × 10 min",
-    description:
-      "Exercises the full advance ladder to COMPLETE. No model config changes needed.",
+    description: "Exercises the full advance ladder to COMPLETE. No model config changes needed.",
     modelConfig: "model-v2 at 2% failure rate, 50–200ms latency (default — no changes needed)",
     expected:
       "Controller advances 10→25→50→75→100→COMPLETE over ~8 min (one step per 2-min window)",
@@ -42,19 +40,17 @@ const SCENARIOS = {
     rps: 200,
     durationSecs: 30,
     label: "200 RPS × 30 s",
-    description:
-      "Exercises guard fresh-window rollback. Requires a model config change.",
+    description: "Exercises guard fresh-window rollback. Requires a model config change.",
     modelConfig: [
       "model-v2 must be at 35% failure rate",
       "  Set:  curl -X PUT localhost:4003/models/model-v2 \\",
-      "          -d '{\"failureRate\":0.35,\"minLatencyMs\":50,\"maxLatencyMs\":200}'",
+      '          -d \'{"failureRate":0.35,"minLatencyMs":50,"maxLatencyMs":200}\'',
       "        (or use the dashboard's Model configuration panel)",
       "        Takes effect immediately — no restart needed.",
       "",
       "  --reset also sets candidate_percentage to 100 so all traffic hits the candidate.",
     ].join("\n  "),
-    expected:
-      "Guard trips fresh window (>30% errors in last 50 req) within ~1s → rollback",
+    expected: "Guard trips fresh window (>30% errors in last 50 req) within ~1s → rollback",
   },
 } as const;
 
@@ -68,21 +64,9 @@ const c = {
 };
 
 console.log();
-console.log(
-  c.bold(
-    c.cyan(
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    ),
-  ),
-);
+console.log(c.bold(c.cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")));
 console.log(c.bold(c.cyan("  AI Model Rollout Platform — Stress Tester")));
-console.log(
-  c.bold(
-    c.cyan(
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    ),
-  ),
-);
+console.log(c.bold(c.cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")));
 console.log();
 console.log(
   `  ${c.bold("Mode")}:      ${mode === "burst" ? c.yellow(mode) : mode}  ${c.dim("(" + scenario.label + ")")}`,
@@ -91,17 +75,11 @@ console.log(`  ${c.bold("Tenant key")}: ${c.dim(apiKey.slice(0, 12) + "…")}`);
 console.log(`  ${c.bold("Profile")}:   ${scenario.description}`);
 console.log();
 console.log(`  ${c.bold("MODEL CONFIG")}`);
-scenario.modelConfig
-  .split("\n")
-  .forEach((line) => console.log(`  ${line}`));
+scenario.modelConfig.split("\n").forEach((line) => console.log(`  ${line}`));
 console.log();
 console.log(`  ${c.bold("EXPECTED")}:  ${scenario.expected}`);
 console.log();
-console.log(
-  c.dim(
-    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-  ),
-);
+console.log(c.dim("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
 console.log();
 
 if (values.reset) {
@@ -110,25 +88,15 @@ if (values.reset) {
   console.log(" ✓");
   console.log();
   console.log(
-    c.yellow(
-      "  ⚠  Restart the rollout controller: this reset an already-active rollout in",
-    ),
+    c.yellow("  ⚠  Restart the rollout controller: this reset an already-active rollout in"),
   );
   console.log(
-    c.yellow(
-      "     place via SQL, which the supervisor's change detection doesn't pick up",
-    ),
+    c.yellow("     place via SQL, which the supervisor's change detection doesn't pick up"),
   );
   console.log(
-    c.yellow(
-      "     on its own (it only notices a rollout's ID appearing/changing/disappearing).",
-    ),
+    c.yellow("     on its own (it only notices a rollout's ID appearing/changing/disappearing)."),
   );
-  console.log(
-    c.yellow(
-      "     Then run again without --reset to begin the load test.",
-    ),
-  );
+  console.log(c.yellow("     Then run again without --reset to begin the load test."));
   console.log();
   process.exit(0);
 }

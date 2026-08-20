@@ -11,8 +11,7 @@ export async function requestModelInference(
   modelVersionId: string,
   request: ModelInferenceRequest,
 ): Promise<ModelInferenceResponse> {
-  const encodedModelVersionId =
-    encodeURIComponent(modelVersionId);
+  const encodedModelVersionId = encodeURIComponent(modelVersionId);
 
   const response = await fetch(
     `${env.MODEL_SERVICE_URL}/v1/models/${encodedModelVersionId}/infer`,
@@ -27,9 +26,7 @@ export async function requestModelInference(
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Model service returned HTTP ${response.status}`,
-    );
+    throw new Error(`Model service returned HTTP ${response.status}`);
   }
 
   const body: unknown = await response.json();

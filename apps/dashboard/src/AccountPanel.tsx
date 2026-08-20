@@ -30,9 +30,7 @@ export function AccountPanel({ onSignedOut }: { onSignedOut: () => void }) {
     <div className="min-h-screen bg-slate-950 text-slate-50 font-sans flex items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-lg border border-slate-800 bg-slate-900 p-6 space-y-4">
         <div>
-          <p className="text-sm font-semibold tracking-widest uppercase text-slate-400">
-            Account
-          </p>
+          <p className="text-sm font-semibold tracking-widest uppercase text-slate-400">Account</p>
           <p className="text-xs text-slate-500 mt-1">{session.session.email}</p>
         </div>
 
@@ -40,8 +38,8 @@ export function AccountPanel({ onSignedOut }: { onSignedOut: () => void }) {
           <div className="space-y-2">
             <p className="text-xs text-slate-500">
               Your new key -- paste it into the stress-tester CLI (
-              <code className="text-slate-600">--apiKey</code>). It's shown only
-              once, and your old key stopped working immediately.
+              <code className="text-slate-600">--apiKey</code>). It's shown only once, and your old
+              key stopped working immediately.
             </p>
             <div className="flex gap-2">
               <code className="flex-1 min-w-0 truncate rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-emerald-400 font-mono">
@@ -73,9 +71,7 @@ export function AccountPanel({ onSignedOut }: { onSignedOut: () => void }) {
           </div>
         )}
 
-        {regenerate.isError && (
-          <p className="text-xs text-red-400">Failed to regenerate key.</p>
-        )}
+        {regenerate.isError && <p className="text-xs text-red-400">Failed to regenerate key.</p>}
 
         <div className="pt-2 border-t border-slate-800 space-y-2">
           <button

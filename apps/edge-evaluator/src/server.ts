@@ -7,15 +7,10 @@ async function startServer(): Promise<void> {
     await connectRedis();
 
     app.listen(env.PORT, () => {
-      console.log(
-        `Edge Evaluator listening on port ${env.PORT}`,
-      );
+      console.log(`Edge Evaluator listening on port ${env.PORT}`);
     });
   } catch (error) {
-    console.error(
-      "Failed to start Edge Evaluator:",
-      error,
-    );
+    console.error("Failed to start Edge Evaluator:", error);
 
     process.exit(1);
   }

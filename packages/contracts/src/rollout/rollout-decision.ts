@@ -20,6 +20,4 @@ export const rolloutDecisionProposalSchema = z.object({
   proposedAt: z.string().datetime(),
 });
 
-export type RolloutDecisionProposal = z.infer<
-  typeof rolloutDecisionProposalSchema
->;
+export type RolloutDecisionProposal = z.infer<typeof rolloutDecisionProposalSchema>;

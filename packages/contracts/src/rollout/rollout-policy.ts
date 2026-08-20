@@ -27,6 +27,4 @@ export const rolloutPolicySchema = z.object({
   cooldownSeconds: z.number().int().nonnegative(),
 });
 
-export type RolloutPolicy = z.infer<
-  typeof rolloutPolicySchema
->;
+export type RolloutPolicy = z.infer<typeof rolloutPolicySchema>;

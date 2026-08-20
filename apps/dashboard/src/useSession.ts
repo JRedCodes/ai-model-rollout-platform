@@ -6,9 +6,7 @@ export interface Session {
 }
 
 export type SessionState =
-  | { status: "loading" }
-  | { status: "signed-out" }
-  | { status: "signed-in"; session: Session };
+  { status: "loading" } | { status: "signed-out" } | { status: "signed-in"; session: Session };
 
 // httpOnly cookies aren't readable from JS (that's the point), so "am I
 // signed in" has to be a server round-trip via GET /auth/me instead of a

@@ -26,10 +26,7 @@ inferenceRouter.post("/:modelVersionId/infer", async (req, res) => {
   }
 
   try {
-    const inferenceResult = await simulateInference(
-      modelVersionId,
-      parsed.data,
-    );
+    const inferenceResult = await simulateInference(modelVersionId, parsed.data);
 
     return res.status(200).json(inferenceResult);
   } catch (error) {

@@ -18,16 +18,16 @@ Drives HTTP traffic against the Edge Evaluator as a real tenant (via `--apiKey`,
 
 Parses `--mode` (`steady` | `burst`, default `steady`), `--reset` (boolean), `--apiKey` (falls back to `TENANT_API_KEY` env, then the seeded demo tenant's key `tk_demo_2218a6e29efe8f4b3378390b46a0710d` — so the documented scenarios keep working unmodified against a fresh clone with zero setup). Two fixed scenarios:
 
-| Mode | RPS | Duration | Requires |
-|---|---|---|---|
-| `steady` | 50 | 10 min | Nothing — default seeded model configs already sit inside the advance thresholds |
-| `burst` | 200 | 30s | `model-v2` manually set to 35% failure rate first (`PUT /models/model-v2`) |
+| Mode     | RPS | Duration | Requires                                                                         |
+| -------- | --- | -------- | -------------------------------------------------------------------------------- |
+| `steady` | 50  | 10 min   | Nothing — default seeded model configs already sit inside the advance thresholds |
+| `burst`  | 200 | 30s      | `model-v2` manually set to 35% failure rate first (`PUT /models/model-v2`)       |
 
-If `--reset` is passed, calls `reset()` (below) and exits *before* starting any load — `--reset` and an actual run are always two separate invocations, never combined. Otherwise constructs a `Runner`, wires a `Monitor` to it, runs both concurrently, then calls `printReport` with the runner's final stats and every transition the monitor observed.
+If `--reset` is passed, calls `reset()` (below) and exits _before_ starting any load — `--reset` and an actual run are always two separate invocations, never combined. Otherwise constructs a `Runner`, wires a `Monitor` to it, runs both concurrently, then calls `printReport` with the runner's final stats and every transition the monitor observed.
 
 ### `runner.ts` — `Runner`
 
-Generates load on a fixed-interval dispatch loop (`setInterval` at `1000/rps` ms), not a tight loop — `maxInFlight = rps * 3` caps concurrent in-flight requests so a slow response doesn't cause unbounded request pileup. Each dispatched request picks a random user ID from a fixed pool of 200 (`stress-user-0` … `stress-user-199`) — a bounded pool, not a fresh random ID per request, so the Edge Evaluator's deterministic per-user hash bucketing (see `documents/EDGE_EVALUATOR.md`) actually gets exercised the way it would with a real, semi-stable user base, rather than every single request rolling an independent coin flip. `sendRequest` POSTs `/v1/infer` with a 5-second timeout; a non-2xx or a body without `success: true` both count as a failure — this file makes no attempt to distinguish *why* a request failed, only whether it did, since that distinction belongs to the guard/controller's own metrics on the receiving end, not this client.
+Generates load on a fixed-interval dispatch loop (`setInterval` at `1000/rps` ms), not a tight loop — `maxInFlight = rps * 3` caps concurrent in-flight requests so a slow response doesn't cause unbounded request pileup. Each dispatched request picks a random user ID from a fixed pool of 200 (`stress-user-0` … `stress-user-199`) — a bounded pool, not a fresh random ID per request, so the Edge Evaluator's deterministic per-user hash bucketing (see `documents/EDGE_EVALUATOR.md`) actually gets exercised the way it would with a real, semi-stable user base, rather than every single request rolling an independent coin flip. `sendRequest` POSTs `/v1/infer` with a 5-second timeout; a non-2xx or a body without `success: true` both count as a failure — this file makes no attempt to distinguish _why_ a request failed, only whether it did, since that distinction belongs to the guard/controller's own metrics on the receiving end, not this client.
 
 ### `monitor.ts` — `Monitor`
 
@@ -43,7 +43,7 @@ Pure formatting over the `Runner`'s final stats and the `Monitor`'s collected tr
 
 A separate, deliberately narrow tool: resolves the tenant's current active rollout via `GET /rollout` (fails loudly if none exists — `--reset` only ever operates on an already-active rollout, it never creates one), then updates that row directly against `DATABASE_URL` with raw SQL — `UPDATE rollouts SET status='RUNNING', candidate_percentage=$1, configuration_version=1` (100% for `burst`, 10% for `steady`), plus `DELETE`s that rollout's `rollout_decisions` and `inference_events` so a fresh run starts from a clean slate rather than accumulating decisions/events across repeated test runs against the same rollout.
 
-**The one gotcha every user of `--reset` needs to know, and the tool prints a warning about it:** this SQL update happens completely outside the Go Rollout Controller's supervisor loop, which only notices a tenant's active rollout when its *ID* appears, changes, or disappears (see `documents/ROLLOUT_CONTROLLER.md`) — an in-place field update on the same row is invisible to it. If the controller already has a pipeline running for that rollout, its in-memory state (the percentage the writer goroutine thinks is current, the guard/controller's metrics windows) doesn't know anything changed. **The controller has to be restarted after a `--reset` on an already-active rollout, before the next run, for the reset to actually take effect** — confirmed by running into this directly while verifying `.github/workflows/stress-smoke.yml`'s setup sequence (see below), which sidesteps the whole problem by never using `--reset` in the first place.
+**The one gotcha every user of `--reset` needs to know, and the tool prints a warning about it:** this SQL update happens completely outside the Go Rollout Controller's supervisor loop, which only notices a tenant's active rollout when its _ID_ appears, changes, or disappears (see `documents/ROLLOUT_CONTROLLER.md`) — an in-place field update on the same row is invisible to it. If the controller already has a pipeline running for that rollout, its in-memory state (the percentage the writer goroutine thinks is current, the guard/controller's metrics windows) doesn't know anything changed. **The controller has to be restarted after a `--reset` on an already-active rollout, before the next run, for the reset to actually take effect** — confirmed by running into this directly while verifying `.github/workflows/stress-smoke.yml`'s setup sequence (see below), which sidesteps the whole problem by never using `--reset` in the first place.
 
 ---
 
@@ -60,9 +60,9 @@ Run manually: `npm run steady --workspace @rollout-platform/stress-tester` or `n
 
 ## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `EDGE_EVALUATOR_URL` | `http://localhost:4002` | Where load is sent |
-| `ROLLOUT_CONTROLLER_URL` | `http://localhost:4003` | Polled for live state narration |
-| `DATABASE_URL` | `postgres://localhost:5432/rollout_platform` | Only used by `--reset`, direct SQL |
-| `TENANT_API_KEY` | seeded demo tenant's key | Overridable per-run via `--apiKey` instead |
+| Variable                 | Default                                      | Description                                |
+| ------------------------ | -------------------------------------------- | ------------------------------------------ |
+| `EDGE_EVALUATOR_URL`     | `http://localhost:4002`                      | Where load is sent                         |
+| `ROLLOUT_CONTROLLER_URL` | `http://localhost:4003`                      | Polled for live state narration            |
+| `DATABASE_URL`           | `postgres://localhost:5432/rollout_platform` | Only used by `--reset`, direct SQL         |
+| `TENANT_API_KEY`         | seeded demo tenant's key                     | Overridable per-run via `--apiKey` instead |

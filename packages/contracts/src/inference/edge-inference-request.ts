@@ -8,6 +8,4 @@ export const edgeInferenceRequestSchema = z.object({
   }),
 });
 
-export type EdgeInferenceRequest = z.infer<
-  typeof edgeInferenceRequestSchema
->;
+export type EdgeInferenceRequest = z.infer<typeof edgeInferenceRequestSchema>;

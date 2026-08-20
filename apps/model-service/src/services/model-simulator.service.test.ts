@@ -131,12 +131,10 @@ describe("simulateInference", () => {
   });
 
   it("propagates UnsupportedModelVersionError from the config lookup", async () => {
-    mockGetModelConfig.mockRejectedValue(
-      new UnsupportedModelVersionError("model-vX"),
-    );
+    mockGetModelConfig.mockRejectedValue(new UnsupportedModelVersionError("model-vX"));
 
-    await expect(
-      simulateInference("model-vX", baseRequest),
-    ).rejects.toBeInstanceOf(UnsupportedModelVersionError);
+    await expect(simulateInference("model-vX", baseRequest)).rejects.toBeInstanceOf(
+      UnsupportedModelVersionError,
+    );
   });
 });

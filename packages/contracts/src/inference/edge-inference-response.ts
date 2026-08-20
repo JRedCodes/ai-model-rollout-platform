@@ -16,6 +16,4 @@ export const edgeInferenceResponseSchema = z.discriminatedUnion("success", [
   }),
 ]);
 
-export type EdgeInferenceResponse = z.infer<
-  typeof edgeInferenceResponseSchema
->;
+export type EdgeInferenceResponse = z.infer<typeof edgeInferenceResponseSchema>;

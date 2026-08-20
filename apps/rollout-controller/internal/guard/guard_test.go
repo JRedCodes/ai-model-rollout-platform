@@ -72,7 +72,7 @@ func TestGuardEvaluate(t *testing.T) {
 			wantCmd:     writer.CmdRollback,
 		},
 		{
-			name:        "fresh window healthy but absolute window exceeds threshold, hold",
+			name: "fresh window healthy but absolute window exceeds threshold, hold",
 			// First 10 events (outside the last-10 fresh window) are all
 			// failures; last 10 (the fresh window) are all successes.
 			// Fresh: 0/10 = 0%. Absolute: 10/20 = 50% > 5% threshold.

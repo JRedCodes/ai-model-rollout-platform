@@ -1,7 +1,6 @@
 import type { Runner } from "./runner.js";
 
-const CONTROLLER_URL =
-  process.env.ROLLOUT_CONTROLLER_URL ?? "http://localhost:4003";
+const CONTROLLER_URL = process.env.ROLLOUT_CONTROLLER_URL ?? "http://localhost:4003";
 
 export interface Transition {
   elapsed: string;
@@ -60,24 +59,18 @@ export class Monitor {
   }
 
   private printLine(): void {
-    const { totalRequests, errorCount, windowLatencies } =
-      this.runner.stats;
+    const { totalRequests, errorCount, windowLatencies } = this.runner.stats;
 
     const elapsed = (Date.now() - this.startMs) / 1000 || 1;
     const rps = Math.round(totalRequests / elapsed);
-    const errorPct =
-      totalRequests > 0
-        ? ((errorCount / totalRequests) * 100).toFixed(1)
-        : "0.0";
+    const errorPct = totalRequests > 0 ? ((errorCount / totalRequests) * 100).toFixed(1) : "0.0";
     const p95 = percentile(windowLatencies, 0.95);
 
     const stateStr = this.lastState
       ? `${this.lastState.candidatePercentage}% ${this.lastState.held ? "HELD" : "RUNNING"}`
       : "connecting...";
 
-    const stateColored = this.lastState?.held
-      ? c.yellow(stateStr)
-      : c.green(stateStr);
+    const stateColored = this.lastState?.held ? c.yellow(stateStr) : c.green(stateStr);
 
     process.stdout.write(
       `${c.dim(`[${this.elapsed()}]`)} RPS: ${String(rps).padStart(3)} | Errors: ${errorPct.padStart(4)}% | P95: ${String(p95).padStart(4)}ms | ${stateColored}\n`,
@@ -126,21 +119,14 @@ export class Monitor {
             description: `HOLD — advancing paused at ${current.candidatePercentage}%`,
           };
           this.transitions.push(transition);
-          process.stdout.write(
-            `${c.yellow(`  ⚠ [${t}] ${transition.description}`)}\n`,
-          );
-        } else if (
-          !current.held &&
-          current.candidatePercentage > prev.candidatePercentage
-        ) {
+          process.stdout.write(`${c.yellow(`  ⚠ [${t}] ${transition.description}`)}\n`);
+        } else if (!current.held && current.candidatePercentage > prev.candidatePercentage) {
           const transition: Transition = {
             elapsed: t,
             description: `ADVANCE — ${prev.candidatePercentage}% → ${current.candidatePercentage}%`,
           };
           this.transitions.push(transition);
-          process.stdout.write(
-            `${c.green(`  ↑ [${t}] ${transition.description}`)}\n`,
-          );
+          process.stdout.write(`${c.green(`  ↑ [${t}] ${transition.description}`)}\n`);
         }
       }
 

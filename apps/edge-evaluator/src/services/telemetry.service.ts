@@ -1,9 +1,6 @@
 import { randomUUID } from "crypto";
 
-import type {
-  FeatureFlag,
-  ModelInferenceResponse,
-} from "@rollout-platform/contracts";
+import type { FeatureFlag, ModelInferenceResponse } from "@rollout-platform/contracts";
 
 import { env } from "../config/env.js";
 import { redisClient } from "../redis/redis.client.js";
@@ -26,8 +23,7 @@ export function publishInferenceEvent(
     rolloutPhaseId: featureFlag?.rolloutPhaseId ?? null,
     modelVersionId: modelResponse.modelVersionId,
     assignment:
-      featureFlag === null ||
-      selectedModelVersionId === featureFlag.stableModelVersionId
+      featureFlag === null || selectedModelVersionId === featureFlag.stableModelVersionId
         ? "stable"
         : "candidate",
     success: modelResponse.success,

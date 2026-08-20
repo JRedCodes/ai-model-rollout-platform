@@ -44,7 +44,7 @@ A brief loading guard (blank screen, not a flash of the sign-in form) covers the
 
 ### `useSSE.ts` — live updates
 
-One `EventSource` for the whole app, opened in `Dashboard`. A stored legacy key goes as an `?api_key=` query param (the one route the server accepts that from — `EventSource` can't send custom headers at all); without one, `withCredentials: true` carries the session cookie instead. On any message, invalidates all four query keys the dashboard's panels read (`rollout`, `metrics`, `decisions`, `modelConfigs`) — the server doesn't say *what* changed, so the client just refetches everything cheap enough to refetch.
+One `EventSource` for the whole app, opened in `Dashboard`. A stored legacy key goes as an `?api_key=` query param (the one route the server accepts that from — `EventSource` can't send custom headers at all); without one, `withCredentials: true` carries the session cookie instead. On any message, invalidates all four query keys the dashboard's panels read (`rollout`, `metrics`, `decisions`, `modelConfigs`) — the server doesn't say _what_ changed, so the client just refetches everything cheap enough to refetch.
 
 ### Panels — `StatusPanel.tsx`, `MetricsPanel.tsx`, `ModelConfigPanel.tsx`, `DecisionFeed.tsx`, `CreateRolloutPanel.tsx`
 
@@ -60,7 +60,7 @@ The visitor-facing "how this works" page — architecture diagram, data/control-
 
 ### Local dev vs. production
 
-`vite.config.ts`'s dev server proxies `/api` → `http://localhost:4003`, which is *why* everything above can use relative `/api/...` paths and same-origin cookies with zero CORS complexity locally. There's no equivalent in a built+`vite preview`/production deployment (`preview` doesn't inherit `server.proxy`) — `documents/DEPLOYMENT.md` covers the build-time `VITE_API_URL` override this needs before a real deploy.
+`vite.config.ts`'s dev server proxies `/api` → `http://localhost:4003`, which is _why_ everything above can use relative `/api/...` paths and same-origin cookies with zero CORS complexity locally. There's no equivalent in a built+`vite preview`/production deployment (`preview` doesn't inherit `server.proxy`) — `documents/DEPLOYMENT.md` covers the build-time `VITE_API_URL` override this needs before a real deploy.
 
 ---
 
@@ -68,11 +68,11 @@ The visitor-facing "how this works" page — architecture diagram, data/control-
 
 ### Unit (`npm test`, vitest + `@testing-library/react` + jsdom)
 
-| File | Covers |
-|---|---|
-| `apiKey.test.ts` | get/set/clear round-tripping, the change-event subscription including unsubscribe actually stopping notifications — pure logic, no React |
-| `router.test.ts` | `navigate()` pushing history and no-op'ing on the current route, `useRoute()` reflecting the path/defaulting unknown paths/updating on `navigate()` (via `renderHook`/`act`) |
-| `useSession.test.ts` | loading → signed-in/signed-out transitions off a mocked `fetch` (ok, non-ok, rejected), `refresh()` triggering a second request |
+| File                 | Covers                                                                                                                                                                       |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiKey.test.ts`     | get/set/clear round-tripping, the change-event subscription including unsubscribe actually stopping notifications — pure logic, no React                                     |
+| `router.test.ts`     | `navigate()` pushing history and no-op'ing on the current route, `useRoute()` reflecting the path/defaulting unknown paths/updating on `navigate()` (via `renderHook`/`act`) |
+| `useSession.test.ts` | loading → signed-in/signed-out transitions off a mocked `fetch` (ok, non-ok, rejected), `refresh()` triggering a second request                                              |
 
 `vitest.config.ts` scopes `test.include` to `src/**/*.test.{ts,tsx}` explicitly — added defensively after a stale `dist/` (from the plain-`tsc`-build packages) was found silently double-running every test in `contracts`/`model-service`; `vite build` doesn't actually leak test files into `dist/` the way those do, but the explicit scope costs nothing and matches the other packages.
 
@@ -80,20 +80,20 @@ The visitor-facing "how this works" page — architecture diagram, data/control-
 
 `playwright.config.ts` assumes redis/postgres/model-service/edge-evaluator/rollout-controller/dashboard are all already running (locally via each service's own dev command, in CI via `docker compose` + built binaries — see `.github/workflows/ci.yml`'s `e2e` job) — no `webServer` auto-start, since Playwright manages one process and this suite needs the whole stack.
 
-| File | Covers |
-|---|---|
-| `signup-flow.spec.ts` | Full UI sign-up → API-key copy-gate (clipboard read-back, not just a click) → dashboard → first rollout creation, explicitly picking a stable model since a brand-new tenant has no completed rollout to default one from |
-| `signin-and-legacy-key.spec.ts` | Sign-in with a fixture account, wrong password shows an error and stays on the form, the legacy demo-tenant-key path, and `/account`'s dashboard-fallback behavior for a legacy-key session |
-| `model-config-and-rollback.spec.ts` | Editing a model's config and confirming it persisted server-side (reload, don't trust optimistic state); force rollback, including the native `confirm()` dialog |
+| File                                | Covers                                                                                                                                                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `signup-flow.spec.ts`               | Full UI sign-up → API-key copy-gate (clipboard read-back, not just a click) → dashboard → first rollout creation, explicitly picking a stable model since a brand-new tenant has no completed rollout to default one from |
+| `signin-and-legacy-key.spec.ts`     | Sign-in with a fixture account, wrong password shows an error and stays on the form, the legacy demo-tenant-key path, and `/account`'s dashboard-fallback behavior for a legacy-key session                               |
+| `model-config-and-rollback.spec.ts` | Editing a model's config and confirming it persisted server-side (reload, don't trust optimistic state); force rollback, including the native `confirm()` dialog                                                          |
 
 `e2e/helpers.ts` provides `apiSignUp(context, email)` — signs up via `context.request` (not the top-level `request` fixture) specifically because it shares its cookie jar with the test's pages, so a subsequent `page.goto()` is already authenticated without re-driving the sign-up form when signup itself isn't what's under test.
 
-Two things every E2E author on this codebase should know going in, both discovered writing these specs, both about the same underlying cause: `GET /rollout`'s up-to-5s lag behind Postgres (see `documents/ROLLOUT_CONTROLLER.md`) means any assertion about a rollout just having been created or rolled back needs `{ timeout: 15_000 }`, not Playwright's 5s default — and Playwright's role/text locators are fuzzy-matching by default (`getByRole("button", { name: "Copy" })` matched *both* "Copy" and "Copy your key to continue" until `exact: true` was added).
+Two things every E2E author on this codebase should know going in, both discovered writing these specs, both about the same underlying cause: `GET /rollout`'s up-to-5s lag behind Postgres (see `documents/ROLLOUT_CONTROLLER.md`) means any assertion about a rollout just having been created or rolled back needs `{ timeout: 15_000 }`, not Playwright's 5s default — and Playwright's role/text locators are fuzzy-matching by default (`getByRole("button", { name: "Copy" })` matched _both_ "Copy" and "Copy your key to continue" until `exact: true` was added).
 
 ---
 
 ## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `VITE_API_URL` *(planned, not yet wired — see `documents/DEPLOYMENT.md`)* | `/api` | Build-time API base; the `/api` default only resolves via Vite's dev proxy today |
+| Variable                                                                  | Default | Description                                                                      |
+| ------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------- |
+| `VITE_API_URL` _(planned, not yet wired — see `documents/DEPLOYMENT.md`)_ | `/api`  | Build-time API base; the `/api` default only resolves via Vite's dev proxy today |

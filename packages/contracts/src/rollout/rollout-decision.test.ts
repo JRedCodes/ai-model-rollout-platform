@@ -16,16 +16,13 @@ describe("rolloutDecisionProposalSchema", () => {
     expect(rolloutDecisionProposalSchema.safeParse(validProposal).success).toBe(true);
   });
 
-  it.each(["ADVANCE", "HOLD", "ROLLBACK", "COMPLETE", "RESUME"])(
-    "accepts action %s",
-    (action) => {
-      const result = rolloutDecisionProposalSchema.safeParse({
-        ...validProposal,
-        action,
-      });
-      expect(result.success).toBe(true);
-    },
-  );
+  it.each(["ADVANCE", "HOLD", "ROLLBACK", "COMPLETE", "RESUME"])("accepts action %s", (action) => {
+    const result = rolloutDecisionProposalSchema.safeParse({
+      ...validProposal,
+      action,
+    });
+    expect(result.success).toBe(true);
+  });
 
   it("rejects an unrecognized action", () => {
     const result = rolloutDecisionProposalSchema.safeParse({

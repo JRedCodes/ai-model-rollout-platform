@@ -122,7 +122,8 @@ export function CreateRolloutPanel() {
 
       {mutation.isSuccess && (
         <p className="text-xs text-emerald-400">
-          Created {mutation.data.id} — {mutation.data.stableModelVersionId} → {mutation.data.candidateModelVersionId}
+          Created {mutation.data.id} — {mutation.data.stableModelVersionId} →{" "}
+          {mutation.data.candidateModelVersionId}
         </p>
       )}
     </div>

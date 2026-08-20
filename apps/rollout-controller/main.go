@@ -62,7 +62,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to redis: %v", err)
 	}
-	defer rdb.Close()
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			log.Printf("redis client close: %v", err)
+		}
+	}()
 
 	hubs := api.NewSSEHubRegistry()
 	pipelines := api.NewPipelineRegistry()

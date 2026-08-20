@@ -68,7 +68,9 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ch := h.subscribe()
 	defer h.unsubscribe(ch)
 
-	fmt.Fprintf(w, "data: {\"type\":\"connected\"}\n\n")
+	if _, err := fmt.Fprintf(w, "data: {\"type\":\"connected\"}\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
 
 	for {
@@ -77,7 +79,11 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", msg)
+			// A write error here means the client disconnected -- stop
+			// rather than keep flushing to a dead connection.
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", msg); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
